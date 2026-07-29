@@ -34,7 +34,17 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
 
-## 배포 순서
+## 배포는 2단계로 나눈다
+
+`appEnv` 컨텍스트 하나로 전환한다. 코드를 고치지 않는다.
+
+| | 1단계 `development` (기본) | 2단계 `production` |
+|---|---|---|
+| 포즈 라이브러리 | 합성(자동 생성) | S3 번들 — 없으면 **기동 실패** |
+| VLM · 포즈 백엔드 | mock | gemini · rtmlib — mock으로 폴백하면 **기동 실패** |
+| 목적 | ALB·RDS·서비스 디스커버리·시크릿 주입·CI 배선 검증 | 실서비스 |
+
+1단계는 실 라이브러리도 API 키도 없이 뜬다. **인프라가 실제로 물리는지 먼저 확인하고**, 준비되면 2단계로 넘어간다.
 
 ```bash
 npm install
@@ -42,8 +52,11 @@ npx cdk bootstrap                      # 계정·리전당 1회
 
 npx cdk deploy StandinRegistry         # 1. 이미지 저장소
 npx cdk deploy StandinCicd             # 2. CI 역할 → 출력된 ARN을 GitHub 변수에 등록
-#    → 앱 저장소에서 워크플로 실행(templates/ 참고)으로 이미지를 먼저 밀어 넣는다
-npx cdk deploy StandinApp              # 3. 이미지가 있어야 서비스가 뜬다
+#    → 앱 저장소에서 워크플로를 돌려 이미지를 먼저 밀어 넣는다(templates/ 참고)
+npx cdk deploy StandinApp              # 3. 1단계 기동
+
+# … 검증 후, 라이브러리·키가 준비되면
+npx cdk deploy StandinApp -c appEnv=production
 ```
 
 `StandinApp`은 ECR에 `latest` 태그가 있어야 태스크가 기동한다. **2번과 3번 사이에 이미지 푸시가 반드시 들어간다.**
@@ -65,7 +78,7 @@ connectionString: config.databaseUrl || undefined,
 
 이 변경 없이 배포하면 로컬 기본값(`localhost:5433`)으로 접속을 시도해 기동에 실패한다.
 
-### 2. 포즈 라이브러리 번들 업로드
+### 2. 포즈 라이브러리 번들 업로드 (2단계)
 
 ```bash
 tar -czf v1.tar.gz -C data poses.db index.pkl bvh
@@ -78,21 +91,17 @@ aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 
 ### 3. 소셜 로그인 키
 
-`standin/oauth` 시크릿에 아래 키로 값을 채운다. 비어 있으면 태스크가 기동하지 못한다.
+`standin/oauth` 시크릿에는 **키 6개가 빈 값으로 이미 만들어져 있다.** 콘솔에서 값만 채우면 된다.
 
-```json
-{
-  "googleClientId": "", "googleClientSecret": "",
-  "kakaoClientId": "", "kakaoClientSecret": "",
-  "naverClientId": "", "naverClientSecret": ""
-}
-```
+키를 미리 만들어 두는 이유: ECS는 태스크를 띄울 때 시크릿의 JSON 키를 해석하는데, 없는 키를 참조하면 컨테이너가 시작조차 못 한다. 값이 비어 있으면 앱이 `PROVIDER_UNAVAILABLE`로 처리하므로 기동에는 문제가 없다 — 소셜 로그인만 비활성이다.
 
 각 provider 콘솔의 Redirect URI도 `{AlbUrl}/v1/auth/oauth/{provider}/callback`로 등록한다.
 
-### 4. VLM API 키
+### 4. VLM API 키 (2단계)
 
-추론 태스크는 `APP_ENV=production`이라 mock 백엔드로 뜨지 않는다. `VLM_PROVIDER=gemini`에 맞는 `GEMINI_API_KEY`를 시크릿으로 추가하고 `lib/app-stack.ts`의 추론 컨테이너에 연결해야 한다. **현재 스캐폴드에는 이 연결이 비어 있다.**
+`standin/vlm` 시크릿의 `geminiApiKey`에 값을 채운다. 배선은 이미 돼 있다.
+
+값이 비면 추론 서버가 조용히 mock으로 폴백하는데, 런타임 가드가 그걸 잡아 기동을 막는다 — 가짜 후보가 서빙되는 일은 없다.
 
 ## CI/CD
 
@@ -129,4 +138,5 @@ NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
 - **단일 태스크·단일 AZ.** `desiredCount: 1`, RDS `multiAz: false`. 가용성이 필요해지면 올린다.
 - **Job 유실.** BFF의 분석 Job이 아직 프로세스 내 fire-and-forget이라 배포·태스크 교체 시 진행 중 작업이 사라진다. SQS로 옮기기 전까지의 감수 사항이다.
 - **RDS `removalPolicy: SNAPSHOT`, `deletionProtection: false`.** 초기 단계 설정이다. 실사용자가 생기면 `RETAIN` + 삭제 보호로 바꿀 것.
-- **환경 분리 없음.** dev/prod 스택 분리는 넣지 않았다. 필요해지면 스택 이름과 컨텍스트를 환경별로 나눈다.
+- **환경 분리 없음.** dev/prod 스택을 따로 두지 않았다. `appEnv`는 같은 스택의 동작만 바꾼다. 두 환경을 동시에 띄우려면 스택 이름을 환경별로 나눠야 한다.
+- **이메일 발송(SES) 미설정.** BFF는 `SMTP_HOST`가 없으면 인증 링크를 로그로만 남긴다. 로그인은 이메일 인증을 요구하므로 **SES를 붙이기 전까지 이메일 가입자는 로그인할 수 없다**(소셜 로그인은 정상). SES 프로덕션 액세스는 신청에 시간이 걸리니 미리 신청할 것.

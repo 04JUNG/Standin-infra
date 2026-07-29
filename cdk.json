@@ -18,6 +18,8 @@
     "githubOrg": "04JUNG",
     "githubRepos": ["Standin-app-server", "Standin-server"],
     "//publicUrl": "ALB DNS를 처음 배포로 알아낸 뒤 채운다. OAuth 리디렉트·이메일 링크에 쓰인다.",
-    "publicUrl": ""
+    "publicUrl": "",
+    "//appEnv": "1단계는 development(합성 라이브러리·mock)로 배선만 검증. 실 라이브러리·API 키가 준비되면 -c appEnv=production.",
+    "appEnv": "development"
   }
 }

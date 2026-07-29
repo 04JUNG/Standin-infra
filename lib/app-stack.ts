@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
+import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, type StackProps } from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import type * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
@@ -15,6 +15,13 @@ export interface AppStackProps extends StackProps {
   inferenceRepo: ecr.Repository;
   /** ALB DNS를 알기 전 첫 배포에서는 비워 둔다. 이후 채워서 재배포. */
   publicUrl: string;
+  /**
+   * 배포 단계 스위치.
+   *   development — 합성 라이브러리·mock 백엔드로 인프라 배선만 검증(1단계)
+   *   production  — 실 라이브러리·실모델. 둘 중 하나라도 없으면 태스크가 기동하지 않는다(2단계)
+   * `cdk deploy -c appEnv=production` 으로 전환한다. 코드 수정이 필요 없다.
+   */
+  appEnv: "development" | "production";
 }
 
 /**
@@ -41,6 +48,8 @@ export interface AppStackProps extends StackProps {
 export class AppStack extends Stack {
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
+
+    const isProd = props.appEnv === "production";
 
     // ── 네트워크 ─────────────────────────────────────────────────
     const vpc = new ec2.Vpc(this, "Vpc", {
@@ -129,14 +138,34 @@ export class AppStack extends Stack {
     });
 
     // 소셜 로그인 키는 콘솔에서 발급받아 채워야 한다 → 빈 껍데기만 만든다.
+    // 소셜 로그인 키는 콘솔에서 발급받아 채운다. 여기서는 **키 이름만** 만들어 둔다.
+    //
+    // ⚠ ECS는 태스크를 띄울 때 시크릿의 JSON 키를 해석한다. 없는 키를 참조하면
+    //   컨테이너가 시작조차 못 한다(ResourceInitializationError). 그래서 값이 없더라도
+    //   키는 반드시 존재해야 한다. 앱은 빈 키를 PROVIDER_UNAVAILABLE로 처리하므로
+    //   빈 문자열로 두어도 기동에는 문제가 없다.
     const oauthSecret = new secretsmanager.Secret(this, "OAuthSecret", {
       secretName: "standin/oauth",
-      description:
-        "소셜 로그인 클라이언트 키. 배포 후 콘솔에서 값을 채운다: " +
-        "{googleClientId, googleClientSecret, kakaoClientId, kakaoClientSecret, naverClientId, naverClientSecret}",
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({}),
-        generateStringKey: "placeholder",
+      description: "Social login client credentials. Fill values in the console after deploy.",
+      secretObjectValue: {
+        googleClientId: SecretValue.unsafePlainText(""),
+        googleClientSecret: SecretValue.unsafePlainText(""),
+        kakaoClientId: SecretValue.unsafePlainText(""),
+        kakaoClientSecret: SecretValue.unsafePlainText(""),
+        naverClientId: SecretValue.unsafePlainText(""),
+        naverClientSecret: SecretValue.unsafePlainText(""),
+      },
+    });
+
+    // VLM API 키. 같은 이유로 키 이름을 미리 만들어 둔다.
+    // 2단계(production)에서 값을 채우지 않으면 추론이 조용히 mock으로 폴백하는데,
+    // 추론 서버의 런타임 가드가 그걸 잡아 기동을 막는다.
+    const vlmSecret = new secretsmanager.Secret(this, "VlmSecret", {
+      secretName: "standin/vlm",
+      description: "VLM provider API keys. Fill values in the console before switching to production.",
+      secretObjectValue: {
+        geminiApiKey: SecretValue.unsafePlainText(""),
+        openaiApiKey: SecretValue.unsafePlainText(""),
       },
     });
 
@@ -157,16 +186,21 @@ export class AppStack extends Stack {
         logRetention: logs.RetentionDays.TWO_WEEKS,
       }),
       environment: {
-        APP_ENV: "production",
-        // ⚠ production에서는 mock이 차단된다. 실제 값으로 바꾸기 전까지 태스크가 뜨지 않는다.
-        //    첫 배포를 통과시키려면 아래를 실제 provider로 바꾸고 API 키를 시크릿에 넣어야 한다.
-        VLM_PROVIDER: "gemini",
-        POSE_BACKEND: "rtmlib",
+        APP_ENV: props.appEnv,
+        // 1단계는 mock으로 인프라 배선만 확인하고, 2단계에서 실모델로 넘어간다.
+        // production에서 mock이면 추론 서버가 기동을 거부한다(조용한 폴백도 잡는다).
+        VLM_PROVIDER: isProd ? "gemini" : "mock",
+        POSE_BACKEND: isProd ? "rtmlib" : "mock",
         DATA_DIR: "/app/data",
         DB_PATH: "/app/data/poses.db",
         INDEX_PATH: "/app/data/index.pkl",
-        // 포즈 라이브러리 번들 위치. 업로드 후 이 값을 채운다.
-        POSE_LIBRARY_URI: `s3://${assets.bucketName}/pose-library/v1.tar.gz`,
+        // 1단계에서는 비운다 → 합성 라이브러리로 기동한다.
+        // 2단계에서는 번들을 받아 푼다. 번들이 없으면 기동에 실패한다(의도).
+        POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
+      },
+      secrets: {
+        GEMINI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "geminiApiKey"),
+        OPENAI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "openaiApiKey"),
       },
       portMappings: [{ containerPort: 8000 }],
       healthCheck: {

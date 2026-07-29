@@ -17,6 +17,12 @@ const githubOrg = app.node.tryGetContext("githubOrg") as string;
 const githubRepos = app.node.tryGetContext("githubRepos") as string[];
 const publicUrl = (app.node.tryGetContext("publicUrl") as string) ?? "";
 
+// 1단계(development)로 인프라 배선을 먼저 검증하고, 준비되면
+// `cdk deploy -c appEnv=production` 으로 2단계로 넘어간다.
+const appEnv = (app.node.tryGetContext("appEnv") as string) === "production"
+  ? ("production" as const)
+  : ("development" as const);
+
 // 이미지는 앱보다 오래 산다 — 앱 스택을 지웠다 다시 만들어도 롤백 대상이 남아야 한다.
 const registry = new RegistryStack(app, "StandinRegistry", { env });
 
@@ -34,6 +40,7 @@ new AppStack(app, "StandinApp", {
   bffRepo: registry.bffRepo,
   inferenceRepo: registry.inferenceRepo,
   publicUrl,
+  appEnv,
 });
 
 cdk.Tags.of(app).add("Project", "Standin");
