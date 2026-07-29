@@ -65,18 +65,13 @@ npx cdk deploy StandinApp -c appEnv=production
 
 ## 배포 전에 끝내야 할 것
 
-### 1. BFF의 DB 접속 방식 (필수)
+### 1. BFF의 DB 접속 방식 — ✅ 완료
 
-CDK는 RDS가 만든 시크릿을 **표준 `PG*` 변수**로 주입한다(`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`). 접속 문자열을 따로 만들어 보관하지 않기 위해서다.
+CDK는 RDS가 만든 시크릿을 **표준 `PG*` 변수**로 주입한다(`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`). 접속 문자열을 따로 조립해 보관하지 않기 위해서다 — 시크릿을 두 벌로 만들면 회전할 때 어긋난다.
 
-`node-postgres`는 `connectionString`이 없으면 이 변수들을 자동으로 읽는다. `src/db.ts`에서 한 줄만 바꾸면 된다.
+BFF(`feat/postgres`)는 `PGHOST`가 있으면 `connectionString`을 넘기지 않아 `pg`가 `PG*`를 읽는다. 로컬은 `PGHOST`가 없으므로 `DATABASE_URL` 기본값이 그대로 쓰인다.
 
-```ts
-// connectionString이 비면 pg가 PG* 환경변수를 쓴다.
-connectionString: config.databaseUrl || undefined,
-```
-
-이 변경 없이 배포하면 로컬 기본값(`localhost:5433`)으로 접속을 시도해 기동에 실패한다.
+**단, 이 코드는 아직 `feat/postgres` 브랜치에 있다. main에 머지돼야 배포할 수 있다.**
 
 ### 2. 포즈 라이브러리 번들 업로드 (2단계)
 
