@@ -1,0 +1,93 @@
+# Standin-app-server 저장소의 .github/workflows/deploy.yml 로 복사해서 쓴다.
+#
+# 장기 액세스 키를 쓰지 않는다 — GitHub이 실행마다 발급하는 OIDC 토큰으로
+# AWS 역할을 assume한다. 저장소 시크릿에 남는 자격증명이 없다.
+#
+# 필요한 저장소 변수(Settings → Secrets and variables → Actions → Variables):
+#   AWS_REGION       예: ap-northeast-2
+#   AWS_DEPLOY_ROLE  StandinCicd 스택의 DeployRoleArn 출력값
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# OIDC 토큰 발급에 필요하다. 없으면 role assume이 실패한다.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-bff
+  cancel-in-progress: false # 배포는 중간에 끊지 않는다
+
+env:
+  ECR_REPOSITORY: standin/bff
+  ECS_CLUSTER: StandinApp-Cluster # 실제 이름은 스택 출력(ClusterName)으로 확인해 맞춘다
+  ECS_SERVICE: bff
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # 이미지를 만들기 전에 깨진 코드를 거른다.
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # BFF 태스크는 ARM64(Graviton)다 — 러너가 x86이라 크로스 빌드가 필요하다.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 태스크 정의의 이미지를 커밋 SHA로 바꿔 새 리비전을 등록한다.
+      # latest만 밀고 서비스를 재시작하는 방식은 어떤 이미지가 돌고 있는지 추적할 수 없다.
+      - name: Render task definition
+        id: taskdef
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$ECS_SERVICE" \
+            --query taskDefinition > taskdef.json
+          echo "path=taskdef.json" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/amazon-ecs-render-task-definition@v1
+        id: render
+        with:
+          task-definition: ${{ steps.taskdef.outputs.path }}
+          container-name: bff
+          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          # 배포가 안정될 때까지 기다린다. 실패하면 ECS 서킷 브레이커가 롤백한다.
+          wait-for-service-stability: true

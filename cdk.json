@@ -1,0 +1,23 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/standin.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "**/*.d.ts", "**/*.js", "node_modules", "cdk.out"]
+  },
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+    "@aws-cdk/aws-ecs:disableExplicitDeploymentControllerForCircuitBreaker": true,
+    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true,
+    "@aws-cdk/core:target-partitions": ["aws"],
+    "@aws-cdk/core:defaultCrossStackReferences": "strong",
+
+    "//": "── 배포 설정. cdk deploy -c key=value 로 덮어쓸 수 있다. ──",
+    "githubOrg": "04JUNG",
+    "githubRepos": ["Standin-app-server", "Standin-server"],
+    "//publicUrl": "ALB DNS를 처음 배포로 알아낸 뒤 채운다. OAuth 리디렉트·이메일 링크에 쓰인다.",
+    "publicUrl": ""
+  }
+}
