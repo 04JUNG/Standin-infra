@@ -2,6 +2,8 @@ import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, type StackProps
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import type * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
@@ -169,6 +171,12 @@ export class AppStack extends Stack {
       },
     });
 
+    // CloudFront만 ALB를 통과할 수 있게 하는 origin 검증값. 값은 코드나 출력에 남기지 않는다.
+    const originVerifySecret = new secretsmanager.Secret(this, "OriginVerifySecret", {
+      description: "Shared secret used to verify CloudFront requests at the ALB",
+      generateSecretString: { passwordLength: 48, excludePunctuation: true },
+    });
+
     // ── 추론 서비스(내부 전용) ────────────────────────────────────
     const inferenceTask = new ecs.FargateTaskDefinition(this, "InferenceTask", {
       cpu: 1024,
@@ -301,10 +309,21 @@ export class AppStack extends Stack {
     const listener = alb.addListener("Http", {
       port: 80,
       open: true,
-      // TODO: 도메인·ACM 인증서가 준비되면 443 리스너로 바꾸고 80은 리다이렉트.
+      // ALB DNS로 직접 들어온 요청은 거부한다. 정상 요청은 아래 CloudFront 전용 규칙만 통과한다.
+      defaultAction: elbv2.ListenerAction.fixedResponse(403, {
+        contentType: "text/plain",
+        messageBody: "Access denied",
+      }),
     });
 
     listener.addTargets("BffTarget", {
+      priority: 1,
+      conditions: [
+        elbv2.ListenerCondition.httpHeader(
+          "X-Standin-Origin-Verify",
+          [originVerifySecret.secretValue.unsafeUnwrap()],
+        ),
+      ],
       port: 8080,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targets: [bffService],
@@ -318,10 +337,38 @@ export class AppStack extends Stack {
       deregistrationDelay: Duration.seconds(30),
     });
 
+    // 도메인이 없어도 CloudFront 기본 인증서(*.cloudfront.net)로 공인 HTTPS를 제공한다.
+    // API이므로 캐시하지 않고, Host를 제외한 헤더·쿠키·쿼리스트링을 origin에 전달한다.
+    const distribution = new cloudfront.Distribution(this, "Distribution", {
+      comment: "Standin public HTTPS entry point",
+      defaultBehavior: {
+        origin: new origins.HttpOrigin(alb.loadBalancerDnsName, {
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+          customHeaders: {
+            "X-Standin-Origin-Verify": originVerifySecret.secretValue.unsafeUnwrap(),
+          },
+        }),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        compress: true,
+      },
+      enabled: true,
+      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+    });
+
     // ── 출력 ─────────────────────────────────────────────────────
     new CfnOutput(this, "AlbUrl", {
       value: `http://${alb.loadBalancerDnsName}`,
-      description: "클라 VITE_API_BASE_URL · OAuth 리디렉트의 기준 URL",
+      description: "CloudFront origin 전용 주소(직접 요청은 403)",
+    });
+    new CfnOutput(this, "CloudFrontUrl", {
+      value: `https://${distribution.distributionDomainName}`,
+      description: "클라 API · OAuth 리디렉트 · 이메일 인증 링크의 공개 HTTPS 기준 URL",
     });
     new CfnOutput(this, "AssetsBucketName", {
       value: assets.bucketName,

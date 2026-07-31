@@ -6,7 +6,10 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 [Tauri 데스크톱]
       │  HTTPS
       ▼
-   ALB (public)
+ CloudFront (*.cloudfront.net)
+      │  HTTP + origin 검증 헤더
+      ▼
+   ALB (직접 접근 403)
       │
       ▼
   ECS Fargate: BFF (arm64) ──Cloud Map──▶ ECS Fargate: 추론 (x86_64)
@@ -30,6 +33,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 
 - **NAT Gateway 없음** (월 ~$32 절약). 태스크는 퍼블릭 서브넷 + 퍼블릭 IP로 외부(VLM API·S3)에 나가고, 인바운드는 보안그룹으로 막는다. RDS는 isolated 서브넷이라 인터넷에서 닿지 않는다.
 - **공개 경계는 BFF 하나뿐.** 추론 서버는 무인증이므로(`Standin-server/docs/API_CONTRACT.md`) ALB에 붙이지 않고 Cloud Map 내부 DNS(`inference.standin.local`)로만 노출한다. 보안그룹도 BFF에서 오는 8000만 연다.
+- **도메인 없이 HTTPS.** CloudFront 기본 `*.cloudfront.net` 인증서를 공개 진입점으로 쓴다. API 캐시는 끄고 모든 메서드·헤더·쿠키·쿼리스트링을 BFF로 전달한다. ALB는 CloudFront가 붙이는 비밀 헤더가 없는 요청을 403으로 거부한다.
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
@@ -61,7 +65,16 @@ npx cdk deploy StandinApp -c appEnv=production
 
 `StandinApp`은 ECR에 `latest` 태그가 있어야 태스크가 기동한다. **2번과 3번 사이에 이미지 푸시가 반드시 들어간다.**
 
-배포 후 출력되는 `AlbUrl`을 `cdk.json`의 `publicUrl`에 채우고 `StandinApp`을 다시 배포한다. OAuth 콜백과 이메일 인증 링크가 이 값을 쓴다.
+배포 후 출력되는 `CloudFrontUrl`을 `cdk.json`의 `publicUrl`에 채우고 `StandinApp`을 다시 배포한다. OAuth 콜백과 이메일 인증 링크가 이 HTTPS 값을 쓴다.
+
+```bash
+npx cdk deploy StandinApp
+# 출력 예: CloudFrontUrl=https://dxxxxxxxxxxxxx.cloudfront.net
+
+npx cdk deploy StandinApp -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net
+```
+
+클라이언트의 API 기준 URL과 각 OAuth provider의 Redirect URI도 `CloudFrontUrl`을 사용한다. `AlbUrl`은 CloudFront origin 확인용 출력이며 직접 호출하면 403이 정상이다.
 
 ## 배포 전에 끝내야 할 것
 
@@ -129,7 +142,7 @@ NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
 
 ## 알려진 한계
 
-- **HTTPS 미설정.** ALB가 80만 연다. 도메인과 ACM 인증서가 준비되면 443 리스너로 바꾸고 80은 리다이렉트해야 한다. **그 전까지 토큰이 평문으로 오간다 — 실사용자를 받기 전에 반드시 처리할 것.**
+- **CloudFront→ALB 구간은 HTTP.** 사용자→CloudFront는 공인 HTTPS지만 origin 구간은 아직 HTTP다. 도메인이 준비되면 ALB에 ACM 인증서를 붙이고 CloudFront origin policy를 `HTTPS_ONLY`로 바꾼다.
 - **단일 태스크·단일 AZ.** `desiredCount: 1`, RDS `multiAz: false`. 가용성이 필요해지면 올린다.
 - **Job 유실.** BFF의 분석 Job이 아직 프로세스 내 fire-and-forget이라 배포·태스크 교체 시 진행 중 작업이 사라진다. SQS로 옮기기 전까지의 감수 사항이다.
 - **RDS `removalPolicy: SNAPSHOT`, `deletionProtection: false`.** 초기 단계 설정이다. 실사용자가 생기면 `RETAIN` + 삭제 보호로 바꿀 것.
