@@ -212,6 +212,8 @@ export class AppStack extends Stack {
         // 1단계는 mock으로 인프라 배선만 확인하고, 2단계에서 실모델로 넘어간다.
         // production에서 mock이면 추론 서버가 기동을 거부한다(조용한 폴백도 잡는다).
         VLM_PROVIDER: isProd ? "gemini" : "mock",
+        // 기본 모델 변경이나 지원 종료에 영향받지 않도록 배포 모델을 명시한다.
+        GEMINI_MODEL: "gemini-flash-latest",
         POSE_BACKEND: isProd ? "rtmlib" : "mock",
         DATA_DIR: "/app/data",
         DB_PATH: "/app/data/poses.db",
@@ -279,10 +281,14 @@ export class AppStack extends Stack {
         NODE_ENV: "production",
         PUBLIC_URL: props.publicUrl,
         // Vercel 가입 페이지가 register/resend-verification API를 직접 호출한다.
-        CORS_ORIGINS: "https://standin-seven.vercel.app",
+        CORS_ORIGINS:
+          "http://localhost:1420,http://tauri.localhost,tauri://localhost,http://localhost:5173,https://standin-seven.vercel.app",
         // OAuth 완료 후 브라우저에서 데스크톱 앱으로 1회용 교환 코드를 전달한다.
         OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
+        // 이번 데모 배포에서는 로그인 없이 분석/포즈 기능만 허용한다.
+        // users API는 BFF에서 계속 인증을 요구한다.
+        ALLOW_ANONYMOUS_ANALYSIS: "true",
         DATABASE_SSL: "true", // RDS는 TLS 필수
         // DATABASE_URL 대신 표준 PG* 변수를 쓴다 — RDS가 만든 시크릿을 그대로 주입할 수 있어
         // 접속 문자열을 따로 만들어 보관하지 않아도 된다. (README의 앱 변경 사항 참고)
