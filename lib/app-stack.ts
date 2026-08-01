@@ -278,6 +278,8 @@ export class AppStack extends Stack {
         PORT: "8080",
         NODE_ENV: "production",
         PUBLIC_URL: props.publicUrl,
+        // Vercel 가입 페이지가 register/resend-verification API를 직접 호출한다.
+        CORS_ORIGINS: "https://standin-seven.vercel.app",
         // OAuth 완료 후 브라우저에서 데스크톱 앱으로 1회용 교환 코드를 전달한다.
         OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
