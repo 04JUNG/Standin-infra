@@ -29,9 +29,11 @@ export class CicdStack extends Stack {
       clientIds: ["sts.amazonaws.com"],
     });
 
-    // 지정한 저장소의 어느 브랜치에서든 assume 가능. 브랜치까지 좁히려면
-    // `repo:org/name:ref:refs/heads/main` 형태로 바꾼다.
-    const subjects = props.githubRepos.map((r) => `repo:${props.githubOrg}/${r}:*`);
+    // Only jobs attached to the protected GitHub `beta` environment may assume
+    // this role. The environment itself only permits deployments from `main`.
+    const subjects = props.githubRepos.map(
+      (r) => `repo:${props.githubOrg}/${r}:environment:beta`,
+    );
 
     const role = new iam.Role(this, "GithubDeployRole", {
       roleName: "standin-github-deploy",
@@ -73,7 +75,10 @@ export class CicdStack extends Stack {
     role.addToPolicy(
       new iam.PolicyStatement({
         actions: ["iam:PassRole"],
-        resources: ["*"],
+        resources: [
+          `arn:${this.partition}:iam::${this.account}:role/StandinApp-*TaskExecutionRole*`,
+          `arn:${this.partition}:iam::${this.account}:role/StandinApp-*TaskTaskRole*`,
+        ],
         conditions: { StringEquals: { "iam:PassedToService": "ecs-tasks.amazonaws.com" } },
       }),
     );
