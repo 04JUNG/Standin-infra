@@ -15,6 +15,9 @@ const env = {
 
 const githubOrg = app.node.tryGetContext("githubOrg") as string;
 const githubRepos = app.node.tryGetContext("githubRepos") as string[];
+const githubOidcSubjectPrefixes = app.node.tryGetContext(
+  "githubOidcSubjectPrefixes",
+) as string[];
 const publicUrl = (app.node.tryGetContext("publicUrl") as string) ?? "";
 
 // 1단계(development)로 인프라 배선을 먼저 검증하고, 준비되면
@@ -29,8 +32,8 @@ const registry = new RegistryStack(app, "StandinRegistry", { env });
 // CI는 앱 스택보다 먼저 있어야 이미지를 밀어 넣을 수 있다.
 new CicdStack(app, "StandinCicd", {
   env,
-  githubOrg,
-  githubRepos,
+  githubOidcSubjectPrefixes:
+    githubOidcSubjectPrefixes ?? githubRepos.map((repo) => `repo:${githubOrg}/${repo}`),
   bffRepo: registry.bffRepo,
   inferenceRepo: registry.inferenceRepo,
 });

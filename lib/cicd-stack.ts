@@ -4,9 +4,8 @@ import type * as ecr from "aws-cdk-lib/aws-ecr";
 import type { Construct } from "constructs";
 
 export interface CicdStackProps extends StackProps {
-  githubOrg: string;
-  /** OIDC를 신뢰할 저장소 이름들. 예: ["Standin-app-server", "Standin-server"] */
-  githubRepos: string[];
+  /** GitHub API가 반환한 저장소별 OIDC subject prefix. */
+  githubOidcSubjectPrefixes: string[];
   bffRepo: ecr.Repository;
   inferenceRepo: ecr.Repository;
 }
@@ -31,8 +30,8 @@ export class CicdStack extends Stack {
 
     // Only jobs attached to the protected GitHub `beta` environment may assume
     // this role. The environment itself only permits deployments from `main`.
-    const subjects = props.githubRepos.map(
-      (r) => `repo:${props.githubOrg}/${r}:environment:beta`,
+    const subjects = props.githubOidcSubjectPrefixes.map(
+      (prefix) => `${prefix}:environment:beta`,
     );
 
     const role = new iam.Role(this, "GithubDeployRole", {
