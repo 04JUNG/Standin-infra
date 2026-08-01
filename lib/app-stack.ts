@@ -264,6 +264,8 @@ export class AppStack extends Stack {
         PORT: "8080",
         NODE_ENV: "production",
         PUBLIC_URL: props.publicUrl,
+        // OAuth 완료 후 브라우저에서 데스크톱 앱으로 1회용 교환 코드를 전달한다.
+        OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
         DATABASE_SSL: "true", // RDS는 TLS 필수
         // DATABASE_URL 대신 표준 PG* 변수를 쓴다 — RDS가 만든 시크릿을 그대로 주입할 수 있어
