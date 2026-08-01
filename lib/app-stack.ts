@@ -171,6 +171,20 @@ export class AppStack extends Stack {
       },
     });
 
+    // 이메일 인증용 SMTP 설정. 공급자(Gmail·SES SMTP 등)는 배포 후 콘솔에서 채운다.
+    // ECS가 JSON 키를 시작 시 해석하므로 값이 비어 있어도 모든 키를 미리 만든다.
+    const smtpSecret = new secretsmanager.Secret(this, "SmtpSecret", {
+      secretName: "standin/smtp",
+      description: "SMTP credentials used by the BFF for email verification.",
+      secretObjectValue: {
+        host: SecretValue.unsafePlainText(""),
+        port: SecretValue.unsafePlainText("587"),
+        user: SecretValue.unsafePlainText(""),
+        pass: SecretValue.unsafePlainText(""),
+        from: SecretValue.unsafePlainText("Standin <no-reply@standin.local>"),
+      },
+    });
+
     // CloudFront만 ALB를 통과할 수 있게 하는 origin 검증값. 값은 코드나 출력에 남기지 않는다.
     const originVerifySecret = new secretsmanager.Secret(this, "OriginVerifySecret", {
       description: "Shared secret used to verify CloudFront requests at the ALB",
@@ -284,6 +298,11 @@ export class AppStack extends Stack {
         KAKAO_CLIENT_SECRET: ecs.Secret.fromSecretsManager(oauthSecret, "kakaoClientSecret"),
         NAVER_CLIENT_ID: ecs.Secret.fromSecretsManager(oauthSecret, "naverClientId"),
         NAVER_CLIENT_SECRET: ecs.Secret.fromSecretsManager(oauthSecret, "naverClientSecret"),
+        SMTP_HOST: ecs.Secret.fromSecretsManager(smtpSecret, "host"),
+        SMTP_PORT: ecs.Secret.fromSecretsManager(smtpSecret, "port"),
+        SMTP_USER: ecs.Secret.fromSecretsManager(smtpSecret, "user"),
+        SMTP_PASS: ecs.Secret.fromSecretsManager(smtpSecret, "pass"),
+        SMTP_FROM: ecs.Secret.fromSecretsManager(smtpSecret, "from"),
       },
       portMappings: [{ containerPort: 8080 }],
     });

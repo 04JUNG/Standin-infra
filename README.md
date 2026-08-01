@@ -113,6 +113,20 @@ aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 
 값이 비면 추론 서버가 조용히 mock으로 폴백하는데, 런타임 가드가 그걸 잡아 기동을 막는다 — 가짜 후보가 서빙되는 일은 없다.
 
+### 5. 이메일 인증 SMTP
+
+`standin/smtp` 시크릿에 아래 값을 채운다. Gmail SMTP, SES SMTP 등 표준 SMTP 공급자를 사용할 수 있다.
+
+| 키 | 예시 |
+|---|---|
+| `host` | `smtp.gmail.com` |
+| `port` | `587`(STARTTLS) 또는 `465`(TLS) |
+| `user` | SMTP 사용자명 |
+| `pass` | SMTP 비밀번호 또는 앱 비밀번호 |
+| `from` | `Standin <인증된-발신주소>` |
+
+시크릿 값을 바꾼 뒤에는 BFF ECS 서비스를 강제 재배포해야 새 태스크가 값을 읽는다. 개인 Gmail을 쓸 경우 일반 계정 비밀번호가 아니라 앱 비밀번호를 사용한다. SES SMTP를 쓸 경우 SES 콘솔에서 별도로 발급한 SMTP 자격증명을 사용하며 IAM 액세스 키를 그대로 넣지 않는다.
+
 ## CI/CD
 
 `templates/`의 워크플로를 각 앱 저장소의 `.github/workflows/deploy.yml`로 복사한다.
@@ -149,4 +163,4 @@ NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
 - **Job 유실.** BFF의 분석 Job이 아직 프로세스 내 fire-and-forget이라 배포·태스크 교체 시 진행 중 작업이 사라진다. SQS로 옮기기 전까지의 감수 사항이다.
 - **RDS `removalPolicy: SNAPSHOT`, `deletionProtection: false`.** 초기 단계 설정이다. 실사용자가 생기면 `RETAIN` + 삭제 보호로 바꿀 것.
 - **환경 분리 없음.** dev/prod 스택을 따로 두지 않았다. `appEnv`는 같은 스택의 동작만 바꾼다. 두 환경을 동시에 띄우려면 스택 이름을 환경별로 나눠야 한다.
-- **이메일 발송(SES) 미설정.** BFF는 `SMTP_HOST`가 없으면 인증 링크를 로그로만 남긴다. 로그인은 이메일 인증을 요구하므로 **SES를 붙이기 전까지 이메일 가입자는 로그인할 수 없다**(소셜 로그인은 정상). SES 프로덕션 액세스는 신청에 시간이 걸리니 미리 신청할 것.
+- **SMTP 공급자 운영 설정 필요.** 인프라 배선은 `standin/smtp`로 완료돼 있지만 실제 발신 계정과 주소는 별도로 준비해야 한다. SES를 선택하면 프로덕션 액세스 신청과 발신 주소 인증에 시간이 걸릴 수 있다.
