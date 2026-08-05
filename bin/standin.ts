@@ -20,6 +20,20 @@ const githubOidcSubjectPrefixes = app.node.tryGetContext(
 ) as string[];
 const publicUrl = (app.node.tryGetContext("publicUrl") as string) ?? "";
 
+function booleanContext(name: string, defaultValue = false): boolean {
+  const value = app.node.tryGetContext(name) as unknown;
+  if (value === undefined) return defaultValue;
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  throw new Error(`${name} must be true or false`);
+}
+
+const refineEnabled = booleanContext("refineEnabled");
+const refineFeatureEnabled = booleanContext("refineFeatureEnabled");
+if (refineFeatureEnabled && !refineEnabled) {
+  throw new Error("refineFeatureEnabled=true requires refineEnabled=true");
+}
+
 // 1단계(development)로 인프라 배선을 먼저 검증하고, 준비되면
 // `cdk deploy -c appEnv=production` 으로 2단계로 넘어간다.
 const appEnv = (app.node.tryGetContext("appEnv") as string) === "production"
@@ -44,6 +58,8 @@ new AppStack(app, "StandinApp", {
   inferenceRepo: registry.inferenceRepo,
   publicUrl,
   appEnv,
+  refineEnabled,
+  refineFeatureEnabled,
 });
 
 cdk.Tags.of(app).add("Project", "Standin");

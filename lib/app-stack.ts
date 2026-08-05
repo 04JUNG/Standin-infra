@@ -26,6 +26,10 @@ export interface AppStackProps extends StackProps {
    * `cdk deploy -c appEnv=production` 으로 전환한다. 코드 수정이 필요 없다.
    */
   appEnv: "development" | "production";
+  /** 추론 서버에서 실제 BVH 조정 연산을 허용한다. 기본값은 false다. */
+  refineEnabled: boolean;
+  /** BFF가 클라이언트에 refine 기능을 노출한다. 추론 flag가 켜진 뒤에만 활성화한다. */
+  refineFeatureEnabled: boolean;
 }
 
 /**
@@ -258,7 +262,7 @@ export class AppStack extends Stack {
         // refine 게이트는 코드 기본값에 맡기지 않고 배포에서 명시한다.
         // 추론의 기본값은 REFINE_ENABLED=1이라, 적어 두지 않으면 조정본 영속화가
         // 검증되기도 전에 켜진 채로 뜬다.
-        REFINE_ENABLED: "0",
+        REFINE_ENABLED: props.refineEnabled ? "1" : "0",
         REFINE_MOVE_GATE: "0", // P2 이동량 하드 게이트 보류(진단은 계속 기록)
         REFINE_COLLISION_GATE: "1", // P3a 손·전완-몸통 관통 복구
       },
@@ -387,7 +391,7 @@ export class AppStack extends Stack {
          * 노출하지 않는다. 조정본 영속화와 저장 전 미리보기를 staging에서 확인한 뒤
          * 추론 → BFF 순으로 켠다.
          */
-        REFINE_FEATURE_ENABLED: "false",
+        REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
         REFINE_TIMEOUT_MS: "5000",
         BETA_CONSENT_VERSION: "2026-08-02",
         DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
@@ -515,6 +519,14 @@ export class AppStack extends Stack {
       description: "Private 90-day bucket for consented closed-beta input images",
     });
     new CfnOutput(this, "InferenceServiceName", { value: inferenceService.serviceName });
+    new CfnOutput(this, "RefineEnabled", {
+      value: String(props.refineEnabled),
+      description: "Inference-side refine execution flag",
+    });
+    new CfnOutput(this, "RefineFeatureEnabled", {
+      value: String(props.refineFeatureEnabled),
+      description: "BFF refine exposure flag",
+    });
     new CfnOutput(this, "ClusterName", { value: cluster.clusterName });
     new CfnOutput(this, "InferenceOperatorPolicyArn", {
       value: inferenceOperatorPolicy.managedPolicyArn,

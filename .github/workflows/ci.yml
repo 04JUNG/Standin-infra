@@ -39,6 +39,29 @@ jobs:
       - name: Synthesize CloudFormation
         run: npm run synth -- --no-lookups
 
+      - name: Verify default refine flags
+        run: node scripts/assert-refine-flags.mjs 0 false
+
+      - name: Synthesize refine canary
+        run: npm run synth -- --no-lookups -c refineEnabled=true -c refineFeatureEnabled=false
+
+      - name: Verify refine canary flags
+        run: node scripts/assert-refine-flags.mjs 1 false
+
+      - name: Synthesize full refine rollout
+        run: npm run synth -- --no-lookups -c refineEnabled=true -c refineFeatureEnabled=true
+
+      - name: Verify full refine flags
+        run: node scripts/assert-refine-flags.mjs 1 true
+
+      - name: Reject BFF-only refine exposure
+        shell: bash
+        run: |
+          if npm run synth -- --no-lookups -c refineEnabled=false -c refineFeatureEnabled=true; then
+            echo "BFF-only refine exposure must fail synthesis."
+            exit 1
+          fi
+
       - name: Upload synthesized templates
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
         uses: actions/upload-artifact@v4

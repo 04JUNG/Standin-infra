@@ -24,6 +24,10 @@
     "//publicUrl": "ALB DNS를 처음 배포로 알아낸 뒤 채운다. OAuth 리디렉트·이메일 링크에 쓰인다.",
     "publicUrl": "",
     "//appEnv": "1단계는 development(합성 라이브러리·mock)로 배선만 검증. 실 라이브러리·API 키가 준비되면 -c appEnv=production.",
-    "appEnv": "development"
+    "appEnv": "development",
+    "//refineEnabled": "추론 서버의 refine 실행 스위치. 내부 검증 전까지 false.",
+    "refineEnabled": false,
+    "//refineFeatureEnabled": "BFF의 사용자 노출 스위치. refineEnabled=true일 때만 true 허용.",
+    "refineFeatureEnabled": false
   }
 }
