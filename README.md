@@ -62,6 +62,27 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 | BFF | `REFINE_FEATURE_ENABLED` | `false` |
 | BFF | `REFINE_TIMEOUT_MS` | `5000` |
 
+두 배포 플래그는 CDK context로 제어하며 기본값은 모두 off다.
+
+| CDK context | 기본값 | ECS 환경변수 |
+|---|---|---|
+| `refineEnabled` | `false` | 추론 `REFINE_ENABLED=0|1` |
+| `refineFeatureEnabled` | `false` | BFF `REFINE_FEATURE_ENABLED=false|true` |
+
+`refineFeatureEnabled=true`는 `refineEnabled=true`와 함께만 허용된다. BFF 노출만
+단독으로 켜면 synth 단계에서 실패한다.
+
+```bash
+# 1. 코드와 저장소만 배포 — 사용자와 추론 모두 off
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=false -c refineFeatureEnabled=false
+
+# 2. 내부 canary — 추론만 on, 사용자는 off
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=true -c refineFeatureEnabled=false
+
+# 3. E2E 통과 후 사용자 공개
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=true -c refineFeatureEnabled=true
+```
+
 두 flag는 별개다. 추론 endpoint가 살아 있어도 BFF flag가 꺼져 있으면 클라이언트에 노출되지
 않는다(BFF가 분석 응답의 `capabilities.refine`으로 알려 준다). 추론의 코드 기본값은
 `REFINE_ENABLED=1`이므로 **반드시 스택에서 명시한다** — 적어 두지 않으면 검증 전에 켜진 채로 뜬다.
@@ -76,7 +97,8 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 
 ## 배포는 2단계로 나눈다
 
-`appEnv` 컨텍스트 하나로 전환한다. 코드를 고치지 않는다.
+`appEnv`로 실행 환경을 전환하고, 두 refine 컨텍스트로 기능 활성화 단계를 제어한다.
+코드를 고치거나 ECS 태스크 정의를 콘솔에서 직접 수정하지 않는다.
 
 | | 1단계 `development` (기본) | 2단계 `production` |
 |---|---|---|
@@ -96,7 +118,7 @@ npx cdk deploy StandinCicd             # 2. CI 역할 → 출력된 ARN을 GitHu
 npx cdk deploy StandinApp              # 3. 1단계 기동
 
 # … 검증 후, 라이브러리·키가 준비되면
-npx cdk deploy StandinApp -c appEnv=production
+npx cdk deploy StandinApp -c appEnv=production -c refineEnabled=false -c refineFeatureEnabled=false
 ```
 
 `StandinApp`은 ECR에 `latest` 태그가 있어야 태스크가 기동한다. **2번과 3번 사이에 이미지 푸시가 반드시 들어간다.**
