@@ -41,14 +41,26 @@ if (!inferenceService) throw new Error("missing inference ECS service");
 
 const [, inferenceServiceResource] = inferenceService;
 const deploymentConfiguration = inferenceServiceResource.Properties.DeploymentConfiguration;
-if (inferenceServiceResource.Properties.AvailabilityZoneRebalancing !== "DISABLED") {
-  throw new Error("inference ECS service must disable Availability Zone rebalancing");
+const refineEnabled = expectedInference === "1";
+const expectedAvailabilityZoneRebalancing = refineEnabled ? "DISABLED" : "ENABLED";
+const expectedMinimumHealthyPercent = refineEnabled ? 0 : 100;
+const expectedMaximumPercent = refineEnabled ? 100 : 200;
+
+if (
+  inferenceServiceResource.Properties.AvailabilityZoneRebalancing !==
+  expectedAvailabilityZoneRebalancing
+) {
+  throw new Error(
+    `expected inference Availability Zone rebalancing=${expectedAvailabilityZoneRebalancing}`,
+  );
 }
 if (
-  deploymentConfiguration.MinimumHealthyPercent !== 0 ||
-  deploymentConfiguration.MaximumPercent !== 100
+  deploymentConfiguration.MinimumHealthyPercent !== expectedMinimumHealthyPercent ||
+  deploymentConfiguration.MaximumPercent !== expectedMaximumPercent
 ) {
-  throw new Error("inference ECS service must use minimumHealthyPercent=0 and maximumPercent=100");
+  throw new Error(
+    `expected inference deployment=${expectedMinimumHealthyPercent}/${expectedMaximumPercent}`,
+  );
 }
 
 console.log(`refine flags verified: inference=${expectedInference}, bff=${expectedBff}`);
