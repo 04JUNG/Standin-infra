@@ -137,6 +137,12 @@ export class AppStack extends Stack {
     // JWT 서명 키는 CDK가 생성한다(사람이 값을 보지 않는다).
     // Closed-beta input images are isolated from the versioned pose-library bucket.
     // Versioning and Object Lock stay disabled so consent withdrawal can delete data.
+    //
+    // refine이 만든 조정본 BVH도 이 버킷에 들어간다(OPS-01). 사용자 입력에서 파생된
+    // private artifact라 공개 포즈 라이브러리 버킷(assets)에 두지 않는다. 저장 경로는
+    // `installations/{id}/jobs/{jobId}/refined/...`라서 아래 KMS 암호화, 90일 lifecycle,
+    // 동의 철회 시 installations/ prefix 삭제 스윕이 **추가 설정 없이 그대로 적용된다**.
+    // 쓰는 쪽은 BFF뿐이므로 inference task role에는 S3 쓰기 권한을 주지 않는다.
     const betaDataKey = new kms.Key(this, "BetaDataKey", {
       alias: `alias/standin-${props.appEnv}-beta-data`,
       enableKeyRotation: true,
@@ -249,6 +255,12 @@ export class AppStack extends Stack {
         POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
         POSE_LIBRARY_VERSION: "v1",
         DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+        // refine 게이트는 코드 기본값에 맡기지 않고 배포에서 명시한다.
+        // 추론의 기본값은 REFINE_ENABLED=1이라, 적어 두지 않으면 조정본 영속화가
+        // 검증되기도 전에 켜진 채로 뜬다.
+        REFINE_ENABLED: "0",
+        REFINE_MOVE_GATE: "0", // P2 이동량 하드 게이트 보류(진단은 계속 기록)
+        REFINE_COLLISION_GATE: "1", // P3a 손·전완-몸통 관통 복구
       },
       secrets: {
         GEMINI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "geminiApiKey"),
@@ -285,7 +297,19 @@ export class AppStack extends Stack {
         dnsTtl: Duration.seconds(10),
       },
       circuitBreaker: { rollback: true }, // 배포가 실패하면 자동 롤백
-      minHealthyPercent: 100,
+      /**
+       * 태스크를 **한 번에 하나만** 둔다(교체 후 기동).
+       *
+       * refine이 만든 조정본은 그 태스크의 로컬 디스크에 있다. BFF는 POST /refine 직후
+       * 조정본을 GET해서 S3로 옮기는데, minHealthyPercent=100이면 롤링 배포 중 구·신
+       * 태스크가 동시에 뜨고 Cloud Map이 두 주소를 모두 돌려준다. 그러면 POST와 GET이
+       * 서로 다른 태스크에 떨어져 404가 난다.
+       *
+       * 대가는 배포 중 추론 중단(수십 초~2분)이다. BFF는 계속 살아 있고 그 사이의
+       * /analyze 실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다.
+       */
+      minHealthyPercent: 0,
+      maxHealthyPercent: 100,
     });
 
     // ── 추론 운영자 권한 ─────────────────────────────────────────
@@ -356,6 +380,15 @@ export class AppStack extends Stack {
         OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
         BETA_DATA_BUCKET: betaData.bucketName,
+        /**
+         * refine 노출 스위치. 추론의 REFINE_ENABLED와 **별도**다(OPS-02).
+         *
+         * 추론 endpoint가 살아 있어도 이 값이 false면 BFF가 클라이언트에 refine을
+         * 노출하지 않는다. 조정본 영속화와 저장 전 미리보기를 staging에서 확인한 뒤
+         * 추론 → BFF 순으로 켠다.
+         */
+        REFINE_FEATURE_ENABLED: "false",
+        REFINE_TIMEOUT_MS: "5000",
         BETA_CONSENT_VERSION: "2026-08-02",
         DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
         // 분석/포즈 기능은 계정 JWT 대신 동의된 installation 인증을 요구한다.
