@@ -2,22 +2,11 @@
 
 Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)를 함께 배포하므로 앱 저장소와 분리했다.
 
-```
-[Tauri 데스크톱]
-      │  HTTPS
-      ▼
- CloudFront (*.cloudfront.net)
-      │  HTTP + origin 검증 헤더
-      ▼
-   ALB (직접 접근 403)
-      │
-      ▼
-  ECS Fargate: BFF (arm64) ──Cloud Map──▶ ECS Fargate: 추론 (x86_64)
-      │                                          │
-      ▼                                          ▼
-  RDS PostgreSQL                            S3 (포즈 라이브러리 번들)
-  (isolated 서브넷)
-```
+## 현재 AWS 아키텍처
+
+[![Standin AWS 아키텍처](docs/architecture/standin-aws-architecture.png)](docs/architecture/standin-aws-architecture.html)
+
+> `Standin-infra`의 현재 CDK 선언 기준이다. CloudWatch는 ECS 컨테이너 로그(14일 보존)와 Container Insights만 구성되어 있으며, 대시보드·알람·SNS 알림은 아직 없다. 이미지를 클릭하면 확대 가능한 다이어그램을 볼 수 있다.
 
 ## 스택 구성
 
