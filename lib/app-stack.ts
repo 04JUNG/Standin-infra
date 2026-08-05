@@ -302,19 +302,17 @@ export class AppStack extends Stack {
       },
       circuitBreaker: { rollback: true }, // 배포가 실패하면 자동 롤백
       /**
-       * 태스크를 **한 번에 하나만** 둔다(교체 후 기동).
+       * refine이 꺼져 있을 때는 100/200 무중단 롤링을 사용한다.
        *
-       * refine이 만든 조정본은 그 태스크의 로컬 디스크에 있다. BFF는 POST /refine 직후
-       * 조정본을 GET해서 S3로 옮기는데, minHealthyPercent=100이면 롤링 배포 중 구·신
-       * 태스크가 동시에 뜨고 Cloud Map이 두 주소를 모두 돌려준다. 그러면 POST와 GET이
-       * 서로 다른 태스크에 떨어져 404가 난다.
-       *
-       * 대가는 배포 중 추론 중단(수십 초~2분)이다. BFF는 계속 살아 있고 그 사이의
-       * /analyze 실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다.
+       * refine이 켜지면 조정본이 생성된 로컬 태스크에서 BFF가 곧바로 GET해야 하므로
+       * 구·신 태스크가 동시에 Cloud Map에 등록되지 않게 0/100 단일 태스크 교체로
+       * 전환한다. 이때 AWS가 maximumPercent=100을 허용하도록 AZ 재분산도 함께 끈다.
        */
-      availabilityZoneRebalancing: ecs.AvailabilityZoneRebalancing.DISABLED,
-      minHealthyPercent: 0,
-      maxHealthyPercent: 100,
+      availabilityZoneRebalancing: props.refineEnabled
+        ? ecs.AvailabilityZoneRebalancing.DISABLED
+        : ecs.AvailabilityZoneRebalancing.ENABLED,
+      minHealthyPercent: props.refineEnabled ? 0 : 100,
+      maxHealthyPercent: props.refineEnabled ? 100 : 200,
     });
 
     // ── 추론 운영자 권한 ─────────────────────────────────────────
