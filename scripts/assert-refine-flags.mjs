@@ -32,4 +32,35 @@ function requireValue(container, name, expected) {
 
 requireValue("inference", "REFINE_ENABLED", expectedInference);
 requireValue("bff", "REFINE_FEATURE_ENABLED", expectedBff);
+
+const inferenceService = Object.entries(template.Resources).find(
+  ([logicalId, resource]) =>
+    logicalId.startsWith("InferenceService") && resource.Type === "AWS::ECS::Service",
+);
+if (!inferenceService) throw new Error("missing inference ECS service");
+
+const [, inferenceServiceResource] = inferenceService;
+const deploymentConfiguration = inferenceServiceResource.Properties.DeploymentConfiguration;
+const refineEnabled = expectedInference === "1";
+const expectedAvailabilityZoneRebalancing = refineEnabled ? "DISABLED" : "ENABLED";
+const expectedMinimumHealthyPercent = refineEnabled ? 0 : 100;
+const expectedMaximumPercent = refineEnabled ? 100 : 200;
+
+if (
+  inferenceServiceResource.Properties.AvailabilityZoneRebalancing !==
+  expectedAvailabilityZoneRebalancing
+) {
+  throw new Error(
+    `expected inference Availability Zone rebalancing=${expectedAvailabilityZoneRebalancing}`,
+  );
+}
+if (
+  deploymentConfiguration.MinimumHealthyPercent !== expectedMinimumHealthyPercent ||
+  deploymentConfiguration.MaximumPercent !== expectedMaximumPercent
+) {
+  throw new Error(
+    `expected inference deployment=${expectedMinimumHealthyPercent}/${expectedMaximumPercent}`,
+  );
+}
+
 console.log(`refine flags verified: inference=${expectedInference}, bff=${expectedBff}`);
