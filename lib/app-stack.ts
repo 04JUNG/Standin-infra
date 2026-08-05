@@ -6,6 +6,7 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -287,6 +288,45 @@ export class AppStack extends Stack {
       minHealthyPercent: 100,
     });
 
+    // ── 추론 운영자 권한 ─────────────────────────────────────────
+    // 사람 자격증명은 이 스택에서 만들지 않는다. IAM Identity Center의 팀 그룹(권장),
+    // 기존 역할 또는 사용자에 아래 관리형 정책을 연결한다.
+    //
+    // Fargate 컨테이너의 로컬 파일은 태스크 교체 시 사라지므로 서버에 직접 파일을
+    // 복사하지 않는다. 운영자는 버전 관리되는 S3 경로에 번들을 올리고, 지정된 추론
+    // 서비스만 새 태스크로 교체한다. 태스크는 자신의 읽기 전용 역할로 번들을 받는다.
+    const inferenceOperatorPolicy = new iam.ManagedPolicy(this, "InferenceOperatorPolicy", {
+      managedPolicyName: "standin-inference-operator",
+      description: "Upload Standin pose libraries and restart only the inference ECS service",
+      statements: [
+        new iam.PolicyStatement({
+          sid: "ListPoseLibraryPrefix",
+          actions: ["s3:ListBucket", "s3:ListBucketVersions"],
+          resources: [assets.bucketArn],
+          conditions: {
+            StringLike: {
+              "s3:prefix": ["pose-library", "pose-library/*"],
+            },
+          },
+        }),
+        new iam.PolicyStatement({
+          sid: "UploadAndVerifyPoseLibrary",
+          actions: [
+            "s3:PutObject",
+            "s3:GetObject",
+            "s3:GetObjectVersion",
+            "s3:AbortMultipartUpload",
+          ],
+          resources: [assets.arnForObjects("pose-library/*")],
+        }),
+        new iam.PolicyStatement({
+          sid: "RestartInferenceService",
+          actions: ["ecs:DescribeServices", "ecs:UpdateService"],
+          resources: [inferenceService.serviceArn],
+        }),
+      ],
+    });
+
     // ── BFF 서비스(공개 엣지) ─────────────────────────────────────
     const bffTask = new ecs.FargateTaskDefinition(this, "BffTask", {
       cpu: 512,
@@ -315,11 +355,11 @@ export class AppStack extends Stack {
         // OAuth 완료 후 브라우저에서 데스크톱 앱으로 1회용 교환 코드를 전달한다.
         OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
-        // 이번 데모 배포에서는 로그인 없이 분석/포즈 기능만 허용한다.
-        // users API는 BFF에서 계속 인증을 요구한다.
         BETA_DATA_BUCKET: betaData.bucketName,
         BETA_CONSENT_VERSION: "2026-08-02",
         DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+        // 분석/포즈 기능은 계정 JWT 대신 동의된 installation 인증을 요구한다.
+        // users API는 BFF에서 계속 계정 인증을 요구한다.
         ALLOW_ANONYMOUS_ANALYSIS: "false",
         DATABASE_SSL: "true", // RDS는 TLS 필수
         // DATABASE_URL 대신 표준 PG* 변수를 쓴다 — RDS가 만든 시크릿을 그대로 주입할 수 있어
@@ -328,9 +368,9 @@ export class AppStack extends Stack {
       },
       secrets: {
         JWT_SECRET: ecs.Secret.fromSecretsManager(jwtSecret),
+        BETA_REVIEW_ADMIN_TOKEN: ecs.Secret.fromSecretsManager(betaReviewSecret),
         PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
         PGPORT: ecs.Secret.fromSecretsManager(database.secret!, "port"),
-        BETA_REVIEW_ADMIN_TOKEN: ecs.Secret.fromSecretsManager(betaReviewSecret),
         PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
         PGPASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
         GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(oauthSecret, "googleClientId"),
@@ -437,11 +477,15 @@ export class AppStack extends Stack {
       description: "포즈 라이브러리 번들을 올릴 버킷",
     });
     new CfnOutput(this, "BffServiceName", { value: bffService.serviceName });
-    new CfnOutput(this, "InferenceServiceName", { value: inferenceService.serviceName });
-    new CfnOutput(this, "ClusterName", { value: cluster.clusterName });
     new CfnOutput(this, "BetaDataBucketName", {
       value: betaData.bucketName,
       description: "Private 90-day bucket for consented closed-beta input images",
+    });
+    new CfnOutput(this, "InferenceServiceName", { value: inferenceService.serviceName });
+    new CfnOutput(this, "ClusterName", { value: cluster.clusterName });
+    new CfnOutput(this, "InferenceOperatorPolicyArn", {
+      value: inferenceOperatorPolicy.managedPolicyArn,
+      description: "IAM Identity Center 팀 권한 세트 또는 기존 역할에 연결할 추론 운영 정책",
     });
     }
 }

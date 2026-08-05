@@ -101,6 +101,41 @@ aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 
 `requirements.txt`의 `boto3` 주석도 해제해야 `s3://`를 받을 수 있다.
 
+#### 추론 서버 담당자 IAM 설정
+
+`StandinApp`은 `standin-inference-operator` 관리형 정책을 함께 만든다. 이 정책은
+`pose-library/` 아래의 업로드·조회와 해당 추론 ECS 서비스의 조회·재기동만 허용한다.
+버킷의 다른 경로, 객체 삭제, 다른 ECS 서비스 변경 권한은 포함하지 않는다.
+
+사람별 IAM 사용자나 장기 액세스 키를 새로 만들지 말고, IAM Identity Center에서 추론 팀
+그룹용 권한 세트를 만든 뒤 출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책
+`standin-inference-operator`를 연결한다. 기존 사내 운영 역할을 쓰는 경우에는 그 역할에
+같은 정책을 연결해도 된다.
+
+담당자는 SSO로 로그인한 뒤 번들을 업로드하고 추론 서비스만 새로 배포한다.
+
+```bash
+aws configure sso
+aws sso login --profile standin-inference
+
+aws s3 cp v1.tar.gz \
+  s3://<AssetsBucketName>/pose-library/v1.tar.gz \
+  --profile standin-inference
+
+aws ecs update-service \
+  --cluster <ClusterName> \
+  --service <InferenceServiceName> \
+  --force-new-deployment \
+  --region ap-northeast-2 \
+  --profile standin-inference
+```
+
+세 출력값은 `aws cloudformation describe-stacks --stack-name StandinApp` 또는 CDK 배포
+결과에서 확인한다. 버킷 버전 관리가 켜져 있으므로 같은 키로 새 번들을 올려도 이전
+버전은 보존된다. 문제가 생기면 검증된 이전 번들을 같은 키로 다시 업로드한 뒤 동일하게
+강제 배포한다. 실행 중 Fargate 컨테이너에 직접 복사한 파일은 태스크 교체 시 사라지므로
+운영 절차로 사용하지 않는다.
+
 ### 3. 소셜 로그인 키
 
 `standin/oauth` 시크릿에는 **키 6개가 빈 값으로 이미 만들어져 있다.** 콘솔에서 값만 채우면 된다.
