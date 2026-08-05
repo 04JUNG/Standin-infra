@@ -312,6 +312,7 @@ export class AppStack extends Stack {
        * 대가는 배포 중 추론 중단(수십 초~2분)이다. BFF는 계속 살아 있고 그 사이의
        * /analyze 실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다.
        */
+      availabilityZoneRebalancing: ecs.AvailabilityZoneRebalancing.DISABLED,
       minHealthyPercent: 0,
       maxHealthyPercent: 100,
     });
