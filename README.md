@@ -2,22 +2,11 @@
 
 Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)를 함께 배포하므로 앱 저장소와 분리했다.
 
-```
-[Tauri 데스크톱]
-      │  HTTPS
-      ▼
- CloudFront (*.cloudfront.net)
-      │  HTTP + origin 검증 헤더
-      ▼
-   ALB (직접 접근 403)
-      │
-      ▼
-  ECS Fargate: BFF (arm64) ──Cloud Map──▶ ECS Fargate: 추론 (x86_64)
-      │                                          │
-      ▼                                          ▼
-  RDS PostgreSQL                            S3 (포즈 라이브러리 번들)
-  (isolated 서브넷)
-```
+## 현재 AWS 아키텍처
+
+[![Standin AWS 아키텍처](docs/architecture/standin-aws-architecture.png)](docs/architecture/standin-aws-architecture.html)
+
+> `Standin-infra`의 현재 CDK 선언 기준이다. CloudWatch는 ECS 컨테이너 로그(14일 보존)와 Container Insights만 구성되어 있으며, 대시보드·알람·SNS 알림은 아직 없다. 이미지를 클릭하면 확대 가능한 다이어그램을 볼 수 있다.
 
 ## 스택 구성
 
@@ -37,10 +26,79 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
+- **추론은 태스크를 한 번에 하나만 둔다** (`minHealthyPercent: 0`, 교체 후 기동). 아래 refine 절 참고. BFF는 기존대로 무중단 롤링(200/100)이다.
+
+## refine (포즈 미세조정) 운영
+
+추론 서버가 선택된 후보를 러프에 맞춰 조정할 수 있다. 인프라 관점의 요점은 세 가지다.
+
+### 1. 조정본은 BFF가 소유한다
+
+추론이 만든 조정본 BVH는 **그 태스크의 로컬 디스크**에 있다. BFF가 `POST /refine` 직후
+바로 받아서 `betaData` 버킷의 `installations/{id}/jobs/{jobId}/refined/...`에 넣고, 이후
+다운로드는 S3에서만 읽는다. 태스크가 교체돼도 저장된 포즈를 계속 내려받을 수 있어야 하기 때문이다.
+
+새 버킷도, 새 IAM도 만들지 않았다. 경로가 `installations/` 아래라 기존 KMS 암호화,
+90일 lifecycle, 동의 철회 시 삭제 스윕, `betaData.grantReadWrite(bffTask.taskRole)`가
+그대로 적용된다. 쓰는 쪽은 BFF뿐이므로 **추론 태스크에는 S3 쓰기 권한을 주지 않는다.**
+
+### 2. 추론 서비스는 단일 태스크로 교체된다
+
+`minHealthyPercent: 0` / `maxHealthyPercent: 100`. 이전 설정(100)은 롤링 배포 중 구·신
+태스크를 동시에 띄웠고, Cloud Map이 두 주소를 모두 돌려주므로 BFF의 `POST /refine`과
+곧이은 조정본 GET이 서로 다른 태스크에 떨어져 404가 날 수 있었다.
+
+**대가**: 배포 중 추론이 잠깐(수십 초~2분) 끊긴다. BFF는 계속 살아 있고 그 사이의 `/analyze`
+실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다. 동시 처리량을 위해
+태스크를 늘려야 할 때가 오면 조정본 전달 방식(추론이 S3에 직접 쓰기)을 먼저 바꿔야 한다.
+
+### 3. flag는 두 개이고 기본값은 둘 다 off
+
+| 서비스 | 변수 | 현재 값 |
+|---|---|---|
+| 추론 | `REFINE_ENABLED` | `0` |
+| 추론 | `REFINE_MOVE_GATE` | `0` (P2 이동량 하드 게이트 보류, 진단은 기록) |
+| 추론 | `REFINE_COLLISION_GATE` | `1` (P3a 손·전완-몸통 관통 복구) |
+| BFF | `REFINE_FEATURE_ENABLED` | `false` |
+| BFF | `REFINE_TIMEOUT_MS` | `5000` |
+
+두 배포 플래그는 CDK context로 제어하며 기본값은 모두 off다.
+
+| CDK context | 기본값 | ECS 환경변수 |
+|---|---|---|
+| `refineEnabled` | `false` | 추론 `REFINE_ENABLED=0|1` |
+| `refineFeatureEnabled` | `false` | BFF `REFINE_FEATURE_ENABLED=false|true` |
+
+`refineFeatureEnabled=true`는 `refineEnabled=true`와 함께만 허용된다. BFF 노출만
+단독으로 켜면 synth 단계에서 실패한다.
+
+```bash
+# 1. 코드와 저장소만 배포 — 사용자와 추론 모두 off
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=false -c refineFeatureEnabled=false
+
+# 2. 내부 canary — 추론만 on, 사용자는 off
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=true -c refineFeatureEnabled=false
+
+# 3. E2E 통과 후 사용자 공개
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=true -c refineFeatureEnabled=true
+```
+
+두 flag는 별개다. 추론 endpoint가 살아 있어도 BFF flag가 꺼져 있으면 클라이언트에 노출되지
+않는다(BFF가 분석 응답의 `capabilities.refine`으로 알려 준다). 추론의 코드 기본값은
+`REFINE_ENABLED=1`이므로 **반드시 스택에서 명시한다** — 적어 두지 않으면 검증 전에 켜진 채로 뜬다.
+
+켜는 순서:
+
+1. BFF 배포 (flag off) — 구·신 추론 응답을 모두 받는다
+2. 클라이언트 배포 (flag off) — fallback UX만 먼저 나간다
+3. 추론 배포 (`REFINE_ENABLED=0`) — 스켈레톤 보완만 smoke test
+4. staging에서 조정본 영속화와 export 검증
+5. 추론 → BFF 순으로 flag on
 
 ## 배포는 2단계로 나눈다
 
-`appEnv` 컨텍스트 하나로 전환한다. 코드를 고치지 않는다.
+`appEnv`로 실행 환경을 전환하고, 두 refine 컨텍스트로 기능 활성화 단계를 제어한다.
+코드를 고치거나 ECS 태스크 정의를 콘솔에서 직접 수정하지 않는다.
 
 | | 1단계 `development` (기본) | 2단계 `production` |
 |---|---|---|
@@ -60,7 +118,7 @@ npx cdk deploy StandinCicd             # 2. CI 역할 → 출력된 ARN을 GitHu
 npx cdk deploy StandinApp              # 3. 1단계 기동
 
 # … 검증 후, 라이브러리·키가 준비되면
-npx cdk deploy StandinApp -c appEnv=production
+npx cdk deploy StandinApp -c appEnv=production -c refineEnabled=false -c refineFeatureEnabled=false
 ```
 
 `StandinApp`은 ECR에 `latest` 태그가 있어야 태스크가 기동한다. **2번과 3번 사이에 이미지 푸시가 반드시 들어간다.**
@@ -92,14 +150,56 @@ BFF(`feat/postgres`)는 `PGHOST`가 있으면 `connectionString`을 넘기지 �
 
 ### 2. 포즈 라이브러리 번들 업로드 (2단계)
 
+`Standin-server` 저장소의 배포 스크립트를 쓴다. 검증 → 압축 → 업로드 → 재기동 → 확인을
+한 번에 하고, 번들이 잘못됐으면 업로드 자체를 막는다.
+
 ```bash
-tar -czf v1.tar.gz -C data poses.db index.pkl bvh
+python scripts/deploy_pose_library.py data/
+```
+
+업로드하지 않으면 추론 태스크가 기동에 실패한다(프로덕션에서는 합성 라이브러리로 대체하지 않는다).
+
+수동으로 만들 때는 `thumbs`를 빠뜨리지 않는다 — 빠져도 에러가 나지 않고 썸네일만 조용히 사라진다.
+
+```bash
+tar -czf v1.tar.gz -C data poses.db index.pkl bvh thumbs
 aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 ```
 
-버킷 이름은 `StandinApp` 출력에서 확인한다. 업로드하지 않으면 추론 태스크가 기동에 실패한다(프로덕션에서는 합성 라이브러리로 대체하지 않는다).
+버킷 이름은 `StandinApp` 출력에서 확인한다.
 
 `requirements.txt`의 `boto3` 주석도 해제해야 `s3://`를 받을 수 있다.
+
+#### 추론 서버 담당자 IAM 설정
+
+`StandinApp`은 `standin-inference-operator` 관리형 정책을 함께 만든다. 이 정책은
+`pose-library/` 아래의 업로드·조회와 해당 추론 ECS 서비스의 조회·재기동만 허용한다.
+버킷의 다른 경로, 객체 삭제, 다른 ECS 서비스 변경 권한은 포함하지 않는다.
+
+사람별 IAM 사용자나 장기 액세스 키를 새로 만들지 말고, IAM Identity Center에서 추론 팀
+그룹용 권한 세트를 만든 뒤 출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책
+`standin-inference-operator`를 연결한다. 기존 사내 운영 역할을 쓰는 경우에는 그 역할에
+같은 정책을 연결해도 된다.
+
+담당자는 SSO로 로그인한 뒤 번들을 업로드하고 추론 서비스만 새로 배포한다.
+
+```bash
+aws configure sso --profile standin-inference    # 최초 1회
+aws sso login --profile standin-inference
+
+python scripts/deploy_pose_library.py data/      # 검증·업로드·재기동·확인
+python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
+```
+
+버킷·클러스터·서비스 이름은 스크립트에 기본값으로 들어 있다. 스택을 다시 만들어 이름이
+바뀌면 `POSE_LIBRARY_BUCKET`·`ECS_CLUSTER`·`ECS_SERVICE` 환경변수로 덮어쓴다. 값은
+`aws cloudformation describe-stacks --stack-name StandinApp` 출력에서 확인한다.
+
+버킷 버전 관리가 켜져 있으므로 같은 키로 새 번들을 올려도 이전 버전은 보존된다 —
+`--rollback`이 그 버전을 찾아 되돌린다. 실행 중 Fargate 컨테이너에 직접 복사한 파일은
+태스크 교체 시 사라지므로 운영 절차로 사용하지 않는다.
+
+자세한 담당자 안내는 [INFERENCE_OPERATOR_GUIDE.md](INFERENCE_OPERATOR_GUIDE.md) 참고.
 
 ### 3. 소셜 로그인 키
 
