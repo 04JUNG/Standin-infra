@@ -26,7 +26,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
-- **추론은 태스크를 한 번에 하나만 둔다** (`minHealthyPercent: 0`, 교체 후 기동). 아래 refine 절 참고. BFF는 기존대로 무중단 롤링(200/100)이다.
+- **추론 배포 정책은 refine flag를 따른다.** off에서는 min/max 100/200 무중단 롤링, on에서는 로컬 조정본 정합성을 위해 0/100 단일 태스크 교체를 쓴다. 아래 refine 절 참고. BFF는 항상 min/max 100/200 무중단 롤링이다.
 
 ## refine (포즈 미세조정) 운영
 
@@ -42,13 +42,14 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 90일 lifecycle, 동의 철회 시 삭제 스윕, `betaData.grantReadWrite(bffTask.taskRole)`가
 그대로 적용된다. 쓰는 쪽은 BFF뿐이므로 **추론 태스크에는 S3 쓰기 권한을 주지 않는다.**
 
-### 2. 추론 서비스는 단일 태스크로 교체된다
+### 2. refine 활성화 시 추론 서비스는 단일 태스크로 교체된다
 
-`minHealthyPercent: 0` / `maxHealthyPercent: 100`. 이전 설정(100)은 롤링 배포 중 구·신
-태스크를 동시에 띄웠고, Cloud Map이 두 주소를 모두 돌려주므로 BFF의 `POST /refine`과
-곧이은 조정본 GET이 서로 다른 태스크에 떨어져 404가 날 수 있었다.
+refine이 꺼져 있을 때는 `minHealthyPercent: 100` / `maxHealthyPercent: 200`과 AZ 재분산을
+사용해 무중단 롤링한다. refine이 켜지면 `0 / 100`과 AZ 재분산 비활성화로 전환한다.
+롤링 배포 중 구·신 태스크를 동시에 띄우면 Cloud Map이 두 주소를 모두 돌려주므로 BFF의
+`POST /refine`과 곧이은 조정본 GET이 서로 다른 태스크에 떨어져 404가 날 수 있기 때문이다.
 
-**대가**: 배포 중 추론이 잠깐(수십 초~2분) 끊긴다. BFF는 계속 살아 있고 그 사이의 `/analyze`
+**refine 활성화 시 대가**: 배포 중 추론이 잠깐(수십 초~2분) 끊긴다. BFF는 계속 살아 있고 그 사이의 `/analyze`
 실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다. 동시 처리량을 위해
 태스크를 늘려야 할 때가 오면 조정본 전달 방식(추론이 S3에 직접 쓰기)을 먼저 바꿔야 한다.
 
