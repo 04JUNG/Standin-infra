@@ -92,12 +92,23 @@ BFF(`feat/postgres`)는 `PGHOST`가 있으면 `connectionString`을 넘기지 �
 
 ### 2. 포즈 라이브러리 번들 업로드 (2단계)
 
+`Standin-server` 저장소의 배포 스크립트를 쓴다. 검증 → 압축 → 업로드 → 재기동 → 확인을
+한 번에 하고, 번들이 잘못됐으면 업로드 자체를 막는다.
+
 ```bash
-tar -czf v1.tar.gz -C data poses.db index.pkl bvh
+python scripts/deploy_pose_library.py data/
+```
+
+업로드하지 않으면 추론 태스크가 기동에 실패한다(프로덕션에서는 합성 라이브러리로 대체하지 않는다).
+
+수동으로 만들 때는 `thumbs`를 빠뜨리지 않는다 — 빠져도 에러가 나지 않고 썸네일만 조용히 사라진다.
+
+```bash
+tar -czf v1.tar.gz -C data poses.db index.pkl bvh thumbs
 aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 ```
 
-버킷 이름은 `StandinApp` 출력에서 확인한다. 업로드하지 않으면 추론 태스크가 기동에 실패한다(프로덕션에서는 합성 라이브러리로 대체하지 않는다).
+버킷 이름은 `StandinApp` 출력에서 확인한다.
 
 `requirements.txt`의 `boto3` 주석도 해제해야 `s3://`를 받을 수 있다.
 
@@ -115,26 +126,22 @@ aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 담당자는 SSO로 로그인한 뒤 번들을 업로드하고 추론 서비스만 새로 배포한다.
 
 ```bash
-aws configure sso
+aws configure sso --profile standin-inference    # 최초 1회
 aws sso login --profile standin-inference
 
-aws s3 cp v1.tar.gz \
-  s3://<AssetsBucketName>/pose-library/v1.tar.gz \
-  --profile standin-inference
-
-aws ecs update-service \
-  --cluster <ClusterName> \
-  --service <InferenceServiceName> \
-  --force-new-deployment \
-  --region ap-northeast-2 \
-  --profile standin-inference
+python scripts/deploy_pose_library.py data/      # 검증·업로드·재기동·확인
+python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
 ```
 
-세 출력값은 `aws cloudformation describe-stacks --stack-name StandinApp` 또는 CDK 배포
-결과에서 확인한다. 버킷 버전 관리가 켜져 있으므로 같은 키로 새 번들을 올려도 이전
-버전은 보존된다. 문제가 생기면 검증된 이전 번들을 같은 키로 다시 업로드한 뒤 동일하게
-강제 배포한다. 실행 중 Fargate 컨테이너에 직접 복사한 파일은 태스크 교체 시 사라지므로
-운영 절차로 사용하지 않는다.
+버킷·클러스터·서비스 이름은 스크립트에 기본값으로 들어 있다. 스택을 다시 만들어 이름이
+바뀌면 `POSE_LIBRARY_BUCKET`·`ECS_CLUSTER`·`ECS_SERVICE` 환경변수로 덮어쓴다. 값은
+`aws cloudformation describe-stacks --stack-name StandinApp` 출력에서 확인한다.
+
+버킷 버전 관리가 켜져 있으므로 같은 키로 새 번들을 올려도 이전 버전은 보존된다 —
+`--rollback`이 그 버전을 찾아 되돌린다. 실행 중 Fargate 컨테이너에 직접 복사한 파일은
+태스크 교체 시 사라지므로 운영 절차로 사용하지 않는다.
+
+자세한 담당자 안내는 [INFERENCE_OPERATOR_GUIDE.md](INFERENCE_OPERATOR_GUIDE.md) 참고.
 
 ### 3. 소셜 로그인 키
 
