@@ -37,6 +37,53 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
+- **추론은 태스크를 한 번에 하나만 둔다** (`minHealthyPercent: 0`, 교체 후 기동). 아래 refine 절 참고. BFF는 기존대로 무중단 롤링(200/100)이다.
+
+## refine (포즈 미세조정) 운영
+
+추론 서버가 선택된 후보를 러프에 맞춰 조정할 수 있다. 인프라 관점의 요점은 세 가지다.
+
+### 1. 조정본은 BFF가 소유한다
+
+추론이 만든 조정본 BVH는 **그 태스크의 로컬 디스크**에 있다. BFF가 `POST /refine` 직후
+바로 받아서 `betaData` 버킷의 `installations/{id}/jobs/{jobId}/refined/...`에 넣고, 이후
+다운로드는 S3에서만 읽는다. 태스크가 교체돼도 저장된 포즈를 계속 내려받을 수 있어야 하기 때문이다.
+
+새 버킷도, 새 IAM도 만들지 않았다. 경로가 `installations/` 아래라 기존 KMS 암호화,
+90일 lifecycle, 동의 철회 시 삭제 스윕, `betaData.grantReadWrite(bffTask.taskRole)`가
+그대로 적용된다. 쓰는 쪽은 BFF뿐이므로 **추론 태스크에는 S3 쓰기 권한을 주지 않는다.**
+
+### 2. 추론 서비스는 단일 태스크로 교체된다
+
+`minHealthyPercent: 0` / `maxHealthyPercent: 100`. 이전 설정(100)은 롤링 배포 중 구·신
+태스크를 동시에 띄웠고, Cloud Map이 두 주소를 모두 돌려주므로 BFF의 `POST /refine`과
+곧이은 조정본 GET이 서로 다른 태스크에 떨어져 404가 날 수 있었다.
+
+**대가**: 배포 중 추론이 잠깐(수십 초~2분) 끊긴다. BFF는 계속 살아 있고 그 사이의 `/analyze`
+실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다. 동시 처리량을 위해
+태스크를 늘려야 할 때가 오면 조정본 전달 방식(추론이 S3에 직접 쓰기)을 먼저 바꿔야 한다.
+
+### 3. flag는 두 개이고 기본값은 둘 다 off
+
+| 서비스 | 변수 | 현재 값 |
+|---|---|---|
+| 추론 | `REFINE_ENABLED` | `0` |
+| 추론 | `REFINE_MOVE_GATE` | `0` (P2 이동량 하드 게이트 보류, 진단은 기록) |
+| 추론 | `REFINE_COLLISION_GATE` | `1` (P3a 손·전완-몸통 관통 복구) |
+| BFF | `REFINE_FEATURE_ENABLED` | `false` |
+| BFF | `REFINE_TIMEOUT_MS` | `5000` |
+
+두 flag는 별개다. 추론 endpoint가 살아 있어도 BFF flag가 꺼져 있으면 클라이언트에 노출되지
+않는다(BFF가 분석 응답의 `capabilities.refine`으로 알려 준다). 추론의 코드 기본값은
+`REFINE_ENABLED=1`이므로 **반드시 스택에서 명시한다** — 적어 두지 않으면 검증 전에 켜진 채로 뜬다.
+
+켜는 순서:
+
+1. BFF 배포 (flag off) — 구·신 추론 응답을 모두 받는다
+2. 클라이언트 배포 (flag off) — fallback UX만 먼저 나간다
+3. 추론 배포 (`REFINE_ENABLED=0`) — 스켈레톤 보완만 smoke test
+4. staging에서 조정본 영속화와 export 검증
+5. 추론 → BFF 순으로 flag on
 
 ## 배포는 2단계로 나눈다
 
