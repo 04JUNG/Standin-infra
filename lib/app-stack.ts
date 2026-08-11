@@ -302,17 +302,25 @@ export class AppStack extends Stack {
       },
       circuitBreaker: { rollback: true }, // 배포가 실패하면 자동 롤백
       /**
-       * refine이 꺼져 있을 때는 100/200 무중단 롤링을 사용한다.
+       * refine 여부와 무관하게 100/200 무중단 롤링을 쓴다.
        *
-       * refine이 켜지면 조정본이 생성된 로컬 태스크에서 BFF가 곧바로 GET해야 하므로
-       * 구·신 태스크가 동시에 Cloud Map에 등록되지 않게 0/100 단일 태스크 교체로
-       * 전환한다. 이때 AWS가 maximumPercent=100을 허용하도록 AZ 재분산도 함께 끈다.
+       * 예전에는 refine이 켜지면 0/100 단일 태스크 교체로 전환했다. 조정본이 생성된
+       * 로컬 태스크에서 BFF가 곧바로 GET해야 했고, 구·신 태스크가 함께 Cloud Map에
+       * 등록되면 그 GET이 조정본을 갖지 않은 쪽에 닿아 404가 났기 때문이다. 대가가
+       * 컸다 — 배포 중 추론이 완전히 멈추고, minHealthyPercent=0은 배포 실패를 그대로
+       * 장애로 만든다.
+       *
+       * 이제 추론 서버가 /refine 응답에 BVH 본문을 실어 보내므로 두 번째 요청 자체가
+       * 없다(REFINE_HANDOFF §3). 로컬 디스크에 의존하는 경로가 사라져 태스크 공존이
+       * 무해해졌다.
+       *
+       * ⚠ 이 변경은 Standin-server 1단계와 Standin-app-server 2단계가 **모두 배포된
+       *   뒤에만** 안전하다. 구 BFF가 아직 두 번 요청하는 상태에서 무중단 배포로
+       *   되돌리면 조정본 404가 난다.
        */
-      availabilityZoneRebalancing: props.refineEnabled
-        ? ecs.AvailabilityZoneRebalancing.DISABLED
-        : ecs.AvailabilityZoneRebalancing.ENABLED,
-      minHealthyPercent: props.refineEnabled ? 0 : 100,
-      maxHealthyPercent: props.refineEnabled ? 100 : 200,
+      availabilityZoneRebalancing: ecs.AvailabilityZoneRebalancing.ENABLED,
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
     });
 
     // ── 추론 운영자 권한 ─────────────────────────────────────────
