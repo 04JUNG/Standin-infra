@@ -41,25 +41,26 @@ if (!inferenceService) throw new Error("missing inference ECS service");
 
 const [, inferenceServiceResource] = inferenceService;
 const deploymentConfiguration = inferenceServiceResource.Properties.DeploymentConfiguration;
-const refineEnabled = expectedInference === "1";
-const expectedAvailabilityZoneRebalancing = refineEnabled ? "DISABLED" : "ENABLED";
-const expectedMinimumHealthyPercent = refineEnabled ? 0 : 100;
-const expectedMaximumPercent = refineEnabled ? 100 : 200;
 
-if (
-  inferenceServiceResource.Properties.AvailabilityZoneRebalancing !==
-  expectedAvailabilityZoneRebalancing
-) {
+// 배포 설정은 이제 refine 플래그와 무관하다. 예전에는 refine이 켜지면 0/100 단일 태스크
+// 교체로 전환했는데, 조정본이 생성된 로컬 태스크에서 BFF가 곧바로 GET해야 했기 때문이다.
+// 추론 서버가 /refine 응답에 BVH 본문을 실어 보내면서 그 두 번째 요청이 사라졌다
+// (Standin-server/docs/REFINE_HANDOFF.md §3). 플래그 상태와 무관하게 항상 무중단이어야
+// 하므로, 여기서도 상수로 못 박아 회귀를 막는다.
+if (inferenceServiceResource.Properties.AvailabilityZoneRebalancing !== "ENABLED") {
   throw new Error(
-    `expected inference Availability Zone rebalancing=${expectedAvailabilityZoneRebalancing}`,
+    "expected inference Availability Zone rebalancing=ENABLED " +
+      `(received ${inferenceServiceResource.Properties.AvailabilityZoneRebalancing})`,
   );
 }
 if (
-  deploymentConfiguration.MinimumHealthyPercent !== expectedMinimumHealthyPercent ||
-  deploymentConfiguration.MaximumPercent !== expectedMaximumPercent
+  deploymentConfiguration.MinimumHealthyPercent !== 100 ||
+  deploymentConfiguration.MaximumPercent !== 200
 ) {
   throw new Error(
-    `expected inference deployment=${expectedMinimumHealthyPercent}/${expectedMaximumPercent}`,
+    "expected inference deployment=100/200 " +
+      `(received ${deploymentConfiguration.MinimumHealthyPercent}/` +
+      `${deploymentConfiguration.MaximumPercent})`,
   );
 }
 
