@@ -436,8 +436,11 @@ export class AppStack extends Stack {
         TRUSTED_PROXY_HOPS: "1",
         QUOTA_INSTALLATION_DAILY: "10",
         QUOTA_INSTALLATION_CONCURRENT: "1",
-        // 전체 일일 상한. Gemini 비용 산정 전이라 아직 끄고(0) 시작한다.
-        QUOTA_GLOBAL_DAILY: "0",
+        // 전체 일일 상한. 오픈베타_계획_2026-08-13 §4-2의 산식에서 나온 값이다:
+        // (월 10만원 − AWS 고정비 5만) ÷ 건당 4원 ≈ 12,500회/월 ≈ 일 416회 → 400.
+        // ⚠ 입력값 둘(AWS 고정비 실측·Gemini 건당 단가)이 아직 측정 전이라 잠정치다.
+        //   단가가 4원을 크게 넘으면 이 값이 아니라 QUOTA_INSTALLATION_DAILY를 먼저 낮춘다.
+        QUOTA_GLOBAL_DAILY: "400",
         ANALYSIS_STALE_AFTER_SECONDS: "300",
         RATE_IP_REGISTER: "5",
         RATE_IP_REGISTER_WINDOW: "3600",

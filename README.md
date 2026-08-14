@@ -106,14 +106,14 @@ BFF는 로그인 없이 설치 단위로 쓰이므로 서버가 사용량을 강
 |---|---:|---|
 | `QUOTA_INSTALLATION_DAILY` | `10` | 설치별 일일 분석 횟수(KST 자정 리셋) |
 | `QUOTA_INSTALLATION_CONCURRENT` | `1` | 설치별 동시 분석 개수 |
-| `QUOTA_GLOBAL_DAILY` | `0` | 서비스 전체 일일 상한. **0 = 끔** — Gemini 비용 산정 후 채운다 |
+| `QUOTA_GLOBAL_DAILY` | `400` | 서비스 전체 일일 상한. 오픈베타 계획 §4-2 산식의 잠정치(단가 실측 후 확정) |
 | `ANALYSIS_STALE_AFTER_SECONDS` | `300` | 이 시간 넘게 진행 중인 Job은 유실로 보고 정리 |
 | `RATE_IP_REGISTER` / `_WINDOW` | `5` / `3600` | IP별 설치 발급 burst |
 | `RATE_IP_ANALYZE` / `_WINDOW` | `5` / `60` | IP별 분석 요청 burst |
 | `TRUSTED_PROXY_HOPS` | `1` | XFF 오른쪽에서 신뢰하는 프록시 홉 수 |
 | `IP_HASH_SALT` | Secrets Manager | IP 해시 솔트(`standin/<env>/ip-hash-salt`, 자동 생성) |
 
-앱의 코드 기본값과 같은 값이라 이 배포는 동작을 바꾸지 않는다. 목적은 손잡이를 만드는 것이다.
+`QUOTA_GLOBAL_DAILY`를 빼면 앱의 코드 기본값과 같은 값이다 — 목적은 운영 중 조정할 손잡이를 만드는 것이다.
 0 이하는 앱이 "제한 없음"으로 읽는다.
 
 ### ⚠ `TRUSTED_PROXY_HOPS`는 요청 체인에 묶여 있다
