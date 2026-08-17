@@ -53,22 +53,26 @@ refine이 꺼져 있을 때는 `minHealthyPercent: 100` / `maxHealthyPercent: 20
 실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다. 동시 처리량을 위해
 태스크를 늘려야 할 때가 오면 조정본 전달 방식(추론이 S3에 직접 쓰기)을 먼저 바꿔야 한다.
 
-### 3. flag는 두 개이고 기본값은 둘 다 off
+### 3. flag는 두 개이고 프로덕션은 둘 다 on
 
 | 서비스 | 변수 | 현재 값 |
 |---|---|---|
-| 추론 | `REFINE_ENABLED` | `0` |
+| 추론 | `REFINE_ENABLED` | `1` |
 | 추론 | `REFINE_MOVE_GATE` | `0` (P2 이동량 하드 게이트 보류, 진단은 기록) |
 | 추론 | `REFINE_COLLISION_GATE` | `1` (P3a 손·전완-몸통 관통 복구) |
-| BFF | `REFINE_FEATURE_ENABLED` | `false` |
+| BFF | `REFINE_FEATURE_ENABLED` | `true` |
 | BFF | `REFINE_TIMEOUT_MS` | `5000` |
 
-두 배포 플래그는 CDK context로 제어하며 기본값은 모두 off다.
+두 배포 플래그는 CDK context로 제어한다. **`cdk.json`의 값이 실제 배포된 상태와 같아야 한다** —
+아래 「cdk.json은 배포 상태의 사본이다」 참고.
 
-| CDK context | 기본값 | ECS 환경변수 |
+| CDK context | `cdk.json` | ECS 환경변수 |
 |---|---|---|
-| `refineEnabled` | `false` | 추론 `REFINE_ENABLED=0|1` |
-| `refineFeatureEnabled` | `false` | BFF `REFINE_FEATURE_ENABLED=false|true` |
+| `refineEnabled` | `true` | 추론 `REFINE_ENABLED=0|1` |
+| `refineFeatureEnabled` | `true` | BFF `REFINE_FEATURE_ENABLED=false|true` |
+
+코드 기본값(`bin/standin.ts`)은 둘 다 `false`다. 단계적으로 켜던 시절의 안전 기본값이며,
+지금은 `cdk.json`이 명시적으로 `true`를 준다.
 
 `refineFeatureEnabled=true`는 `refineEnabled=true`와 함께만 허용된다. BFF 노출만
 단독으로 켜면 synth 단계에서 실패한다.
@@ -136,18 +140,43 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 `Standin-app-server/README.md`의 「Kill switch」 절 참고. 토큰은
 `standin/<env>/beta-review-token` 시크릿이다.
 
+## cdk.json은 배포 상태의 사본이다
+
+`cdk.json`의 context 값은 **실제로 배포된 스택과 같아야 한다.** `-c`로 넘긴 값만 맞고
+파일은 다른 값을 담고 있으면, 다음 사람이 `-c` 없이 `cdk deploy`를 돌리는 순간 그 차이가
+그대로 프로덕션에 적용된다.
+
+| context | 값 | 틀리면 무슨 일이 나나 |
+|---|---|---|
+| `appEnv` | `production` | `development`면 실서비스가 **mock VLM·합성 포즈 라이브러리로 뒤집힌다** |
+| `publicUrl` | CloudFront URL | 비면 OAuth 콜백과 이메일 인증 링크가 깨진다 |
+| `refineEnabled` | `true` | `false`면 refine이 꺼지고, 추론 태스크가 교체되며 수십 초~2분 끊긴다 |
+| `refineFeatureEnabled` | `true` | `false`면 클라이언트에서 refine이 사라진다 |
+
+> 실제로 겪었다. 사용량 제한 env를 배포하려고 `cdk diff`를 돌렸더니 `REFINE_ENABLED 1→0`,
+> `REFINE_FEATURE_ENABLED true→false`가 함께 나왔다 — 배포된 스택은 refine이 켜져 있는데
+> `cdk.json`은 `false`였기 때문이다. 이 값들을 커밋해 두지 않으면 매번 `-c`를 정확히
+> 기억해야 하고, 한 번 빠뜨리면 의도하지 않은 기능 롤백이 조용히 나간다.
+
+**배포 상태를 바꿀 때는 `cdk.json`을 같은 PR에서 고친다.** `-c`는 일회성 실험에만 쓴다.
+배포 전 `npx cdk diff StandinApp`으로 **의도한 리소스만 바뀌는지** 반드시 확인한다.
+
 ## 배포는 2단계로 나눈다
 
 `appEnv`로 실행 환경을 전환하고, 두 refine 컨텍스트로 기능 활성화 단계를 제어한다.
 코드를 고치거나 ECS 태스크 정의를 콘솔에서 직접 수정하지 않는다.
 
-| | 1단계 `development` (기본) | 2단계 `production` |
+| | 1단계 `development` | 2단계 `production` (현재 `cdk.json` 값) |
 |---|---|---|
 | 포즈 라이브러리 | 합성(자동 생성) | S3 번들 — 없으면 **기동 실패** |
 | VLM · 포즈 백엔드 | mock | gemini · rtmlib — mock으로 폴백하면 **기동 실패** |
 | 목적 | ALB·RDS·서비스 디스커버리·시크릿 주입·CI 배선 검증 | 실서비스 |
 
 1단계는 실 라이브러리도 API 키도 없이 뜬다. **인프라가 실제로 물리는지 먼저 확인하고**, 준비되면 2단계로 넘어간다.
+
+⚠ 아래 명령들은 **최초 구축 기록**이다. 지금은 `cdk.json`이 `appEnv=production`을 담고 있으므로
+`-c` 없는 `npx cdk deploy StandinApp`이 곧 프로덕션 배포다. 1단계로 되돌리려면 `-c appEnv=development`를
+명시해야 하고, 그건 실서비스를 mock으로 뒤집는 동작이다.
 
 ```bash
 npm install
