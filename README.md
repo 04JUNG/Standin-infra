@@ -96,6 +96,46 @@ npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxx
 4. staging에서 조정본 영속화와 export 검증
 5. 추론 → BFF 순으로 flag on
 
+## 사용량 제한 운영 (오픈베타)
+
+BFF는 로그인 없이 설치 단위로 쓰이므로 서버가 사용량을 강제한다. 카운터 정본은 RDS
+(`usage_counters` 테이블)라 다중 태스크·재배포에도 유지된다. 정책값은 task definition의
+환경변수로 노출돼 있어 **앱 코드를 고치지 않고 `cdk deploy`만으로 조정**할 수 있다.
+
+| ECS 환경변수 | 현재 값 | 의미 |
+|---|---:|---|
+| `QUOTA_INSTALLATION_DAILY` | `10` | 설치별 일일 분석 횟수(KST 자정 리셋) |
+| `QUOTA_INSTALLATION_CONCURRENT` | `1` | 설치별 동시 분석 개수 |
+| `QUOTA_GLOBAL_DAILY` | `400` | 서비스 전체 일일 상한. 오픈베타 계획 §4-2 산식의 잠정치(단가 실측 후 확정) |
+| `ANALYSIS_STALE_AFTER_SECONDS` | `300` | 이 시간 넘게 진행 중인 Job은 유실로 보고 정리 |
+| `RATE_IP_REGISTER` / `_WINDOW` | `5` / `3600` | IP별 설치 발급 burst |
+| `RATE_IP_ANALYZE` / `_WINDOW` | `5` / `60` | IP별 분석 요청 burst |
+| `TRUSTED_PROXY_HOPS` | `1` | XFF 오른쪽에서 신뢰하는 프록시 홉 수 |
+| `IP_HASH_SALT` | Secrets Manager | IP 해시 솔트(`standin/<env>/ip-hash-salt`, 자동 생성) |
+
+`QUOTA_GLOBAL_DAILY`를 빼면 앱의 코드 기본값과 같은 값이다 — 목적은 운영 중 조정할 손잡이를 만드는 것이다.
+0 이하는 앱이 "제한 없음"으로 읽는다.
+
+### ⚠ `TRUSTED_PROXY_HOPS`는 요청 체인에 묶여 있다
+
+체인이 `클라 → CloudFront → ALB → BFF`이므로 BFF가 보는 `X-Forwarded-For`는
+`…, <뷰어 IP>, <CloudFront 엣지 IP>`다. 즉 **오른쪽에서 2번째가 실제 client IP**이고 값은 `1`이다.
+
+CloudFront가 `ALL_VIEWER_EXCEPT_HOST_HEADER`로 클라가 보낸 XFF까지 그대로 전달하므로
+왼쪽 항목은 위조 가능하다. 이 값을 실제 프록시 수보다 **크게** 잡으면 클라가 헤더를 조작해
+IP 제한을 통째로 우회한다. WAF를 앞에 끼우거나 ALB를 직접 노출하는 등 체인이 바뀌면
+이 값도 함께 바꾼다. ALB가 CloudFront 비밀 헤더 없는 요청을 403으로 막는 것이 이 전제를 지킨다.
+
+IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키로 쓰고, IPv6는 `/64`로 묶는다.
+솔트를 교체하면 진행 중인 IP 카운터가 리셋된다(창이 최대 1시간이라 영향은 작다).
+
+### 운영자 kill switch
+
+분석을 즉시 중단·재개하는 스위치는 **인프라가 아니라 DB**(`service_flags`)에 있다. 재배포가
+필요 없고 전 태스크에 최대 5초 안에 전파된다. 조작은 BFF의 관리자 API로 한다 —
+`Standin-app-server/README.md`의 「Kill switch」 절 참고. 토큰은
+`standin/<env>/beta-review-token` 시크릿이다.
+
 ## 배포는 2단계로 나눈다
 
 `appEnv`로 실행 환경을 전환하고, 두 refine 컨텍스트로 기능 활성화 단계를 제어한다.
