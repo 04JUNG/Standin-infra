@@ -26,7 +26,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
-- **추론 배포 정책은 refine flag를 따른다.** off에서는 min/max 100/200 무중단 롤링, on에서는 로컬 조정본 정합성을 위해 0/100 단일 태스크 교체를 쓴다. 아래 refine 절 참고. BFF는 항상 min/max 100/200 무중단 롤링이다.
+- **두 서비스 모두 항상 무중단 롤링이다**(min/max 100/200 + AZ 재분산). 예전에는 refine이 켜지면 추론만 0/100 단일 태스크 교체로 바꿨는데, 조정본 전달 방식이 바뀌면서 그 제약이 사라졌다(#13). `scripts/assert-refine-flags.mjs`가 회귀를 막는다.
 
 ## refine (포즈 미세조정) 운영
 
@@ -42,16 +42,20 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 90일 lifecycle, 동의 철회 시 삭제 스윕, `betaData.grantReadWrite(bffTask.taskRole)`가
 그대로 적용된다. 쓰는 쪽은 BFF뿐이므로 **추론 태스크에는 S3 쓰기 권한을 주지 않는다.**
 
-### 2. refine 활성화 시 추론 서비스는 단일 태스크로 교체된다
+### 2. 배포 설정은 refine과 무관하다 (다운타임 없음)
 
-refine이 꺼져 있을 때는 `minHealthyPercent: 100` / `maxHealthyPercent: 200`과 AZ 재분산을
-사용해 무중단 롤링한다. refine이 켜지면 `0 / 100`과 AZ 재분산 비활성화로 전환한다.
-롤링 배포 중 구·신 태스크를 동시에 띄우면 Cloud Map이 두 주소를 모두 돌려주므로 BFF의
-`POST /refine`과 곧이은 조정본 GET이 서로 다른 태스크에 떨어져 404가 날 수 있기 때문이다.
+추론·BFF 모두 `minHealthyPercent: 100` / `maxHealthyPercent: 200` + AZ 재분산으로 **항상
+무중단 롤링**한다. refine 플래그가 이 값을 바꾸지 않는다.
 
-**refine 활성화 시 대가**: 배포 중 추론이 잠깐(수십 초~2분) 끊긴다. BFF는 계속 살아 있고 그 사이의 `/analyze`
-실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다. 동시 처리량을 위해
-태스크를 늘려야 할 때가 오면 조정본 전달 방식(추론이 S3에 직접 쓰기)을 먼저 바꿔야 한다.
+예전에는 refine이 켜지면 추론을 `0 / 100` 단일 태스크 교체로 전환했다. 조정본이 생성된
+로컬 태스크에서 BFF가 곧바로 GET해야 했고, 구·신 태스크가 함께 Cloud Map에 등록되면 그
+GET이 조정본을 갖지 않은 쪽에 닿아 404가 났기 때문이다. 대가로 배포 중 추론이 수십 초~2분
+끊겼다.
+
+이제 추론 서버가 `/refine` 응답에 BVH 본문을 실어 보내므로 **두 번째 요청 자체가 없다**
+(`Standin-server/docs/REFINE_HANDOFF.md` §3). 로컬 디스크에 의존하는 경로가 사라져 태스크
+공존이 무해해졌고, 무중단 롤링으로 되돌렸다(#13). `assert-refine-flags.mjs`가 100/200과
+AZ 재분산을 상수로 못 박아 회귀를 막는다.
 
 ### 3. flag는 두 개이고 프로덕션은 둘 다 on
 
@@ -150,7 +154,7 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 |---|---|---|
 | `appEnv` | `production` | `development`면 실서비스가 **mock VLM·합성 포즈 라이브러리로 뒤집힌다** |
 | `publicUrl` | CloudFront URL | 비면 OAuth 콜백과 이메일 인증 링크가 깨진다 |
-| `refineEnabled` | `true` | `false`면 refine이 꺼지고, 추론 태스크가 교체되며 수십 초~2분 끊긴다 |
+| `refineEnabled` | `true` | `false`면 refine이 꺼진다(배포는 항상 무중단이라 다운타임은 없다) |
 | `refineFeatureEnabled` | `true` | `false`면 클라이언트에서 refine이 사라진다 |
 
 > 실제로 겪었다. 사용량 제한 env를 배포하려고 `cdk diff`를 돌렸더니 `REFINE_ENABLED 1→0`,
