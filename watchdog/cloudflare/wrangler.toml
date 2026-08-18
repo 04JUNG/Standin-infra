@@ -1,0 +1,25 @@
+# 외부 헬스 감시자(계획 4단계). AWS 계정 **밖에서** 돌아야 의미가 있다.
+name = "standin-watchdog"
+main = "worker.js"
+compatibility_date = "2026-08-18"
+
+# 1분 주기. Cloudflare 무료 등급에서 가장 짧은 주기이며, ECS 태스크 교체(수십 초)보다
+# 촘촘해 배포 중 순간 끊김과 진짜 장애를 연속 실패 횟수로 구분할 수 있다.
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+# 배포 후 StandinApp의 CloudFrontUrl 출력값으로 바꾼다.
+HEALTH_URL = "https://REPLACE-ME.cloudfront.net/healthz"
+# P1 멘션. 인프라 스택의 DISCORD_ALERT_MENTION과 같은 값을 쓴다.
+DISCORD_ALERT_MENTION = "@here"
+
+# 연속 실패 횟수를 둔다. 값이 바뀔 때만 쓰므로 무료 등급 쓰기 한도에 걸리지 않는다.
+# 만드는 법: npx wrangler kv namespace create WATCHDOG  → 출력된 id를 아래에 넣는다.
+[[kv_namespaces]]
+binding = "WATCHDOG"
+id = "REPLACE-ME"
+
+# ⚠ 웹훅 URL은 여기 쓰지 않는다(이 파일은 저장소에 올라간다).
+#    npx wrangler secret put DISCORD_WEBHOOK_ALERT
+#    npx wrangler secret put DISCORD_WEBHOOK_WARN
