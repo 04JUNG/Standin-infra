@@ -39,6 +39,9 @@ if (refineFeatureEnabled && !refineEnabled) {
 const appEnv = (app.node.tryGetContext("appEnv") as string) === "production"
   ? ("production" as const)
   : ("development" as const);
+const jobExecutionMode = (app.node.tryGetContext("jobExecutionMode") as string) === "sqs"
+  ? ("sqs" as const)
+  : ("inline" as const);
 
 // 이미지는 앱보다 오래 산다 — 앱 스택을 지웠다 다시 만들어도 롤백 대상이 남아야 한다.
 const registry = new RegistryStack(app, "StandinRegistry", { env });
@@ -60,6 +63,7 @@ new AppStack(app, "StandinApp", {
   appEnv,
   refineEnabled,
   refineFeatureEnabled,
+  jobExecutionMode,
 });
 
 cdk.Tags.of(app).add("Project", "Standin");

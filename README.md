@@ -336,7 +336,17 @@ NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
 
 - **CloudFront→ALB 구간은 HTTP.** 사용자→CloudFront는 공인 HTTPS지만 origin 구간은 아직 HTTP다. 도메인이 준비되면 ALB에 ACM 인증서를 붙이고 CloudFront origin policy를 `HTTPS_ONLY`로 바꾼다.
 - **단일 태스크·단일 AZ.** `desiredCount: 1`, RDS `multiAz: false`. 가용성이 필요해지면 올린다.
-- **Job 유실.** BFF의 분석 Job이 아직 프로세스 내 fire-and-forget이라 배포·태스크 교체 시 진행 중 작업이 사라진다. SQS로 옮기기 전까지의 감수 사항이다.
+- **Job 실행 모드.** 기본 `jobExecutionMode=inline`은 롤백 경로다. 앱 서버 #23 배포와
+  queue/worker 검증 뒤 `-c jobExecutionMode=sqs`로 전환한다. SQS는 DLQ 3회, Worker lease와
+  visibility heartbeat를 사용하며 queue age·DLQ를 CloudWatch Alarm으로 감시한다.
+
+### SQS 전환 순서
+
+1. `Standin-app-server`의 outbox/worker 이미지를 먼저 배포하되 `inline` 유지
+2. 이 스택을 배포해 SQS·DLQ와 desiredCount 0 Worker를 생성
+3. staging에서 `-c jobExecutionMode=sqs`로 Worker 1개 활성화
+4. BFF 강제 재시작·Worker 중단 중에도 Job이 완료되는지 확인
+5. queue age와 DLQ가 비어 있는지 확인한 뒤 production을 `sqs`로 전환
 - **RDS `removalPolicy: SNAPSHOT`, `deletionProtection: false`.** 초기 단계 설정이다. 실사용자가 생기면 `RETAIN` + 삭제 보호로 바꿀 것.
 - **환경 분리 없음.** dev/prod 스택을 따로 두지 않았다. `appEnv`는 같은 스택의 동작만 바꾼다. 두 환경을 동시에 띄우려면 스택 이름을 환경별로 나눠야 한다.
 - **SMTP 공급자 운영 설정 필요.** 인프라 배선은 `standin/smtp`로 완료돼 있지만 실제 발신 계정과 주소는 별도로 준비해야 한다. SES를 선택하면 프로덕션 액세스 신청과 발신 주소 인증에 시간이 걸릴 수 있다.

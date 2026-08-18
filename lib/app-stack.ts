@@ -3,6 +3,7 @@ import * as ec2 from "aws-cdk-lib/aws-ec2";
 import type * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -12,6 +13,7 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 
 export interface AppStackProps extends StackProps {
@@ -30,6 +32,8 @@ export interface AppStackProps extends StackProps {
   refineEnabled: boolean;
   /** BFF가 클라이언트에 refine 기능을 노출한다. 추론 flag가 켜진 뒤에만 활성화한다. */
   refineFeatureEnabled: boolean;
+  /** 기본 inline. 앱·queue 검증 뒤 sqs로 전환하면 worker desiredCount도 1이 된다. */
+  jobExecutionMode: "inline" | "sqs";
 }
 
 /**
@@ -78,6 +82,10 @@ export class AppStack extends Stack {
       vpc: vpc,
       description: "Standin inference tasks (unauthenticated - never expose publicly)",
     });
+    const workerSg = new ec2.SecurityGroup(this, "WorkerSg", {
+      vpc,
+      description: "Standin analysis queue workers",
+    });
 
     const dbSg = new ec2.SecurityGroup(this, "DbSg", {
       vpc: vpc,
@@ -87,7 +95,9 @@ export class AppStack extends Stack {
 
     // 유일하게 허용하는 내부 경로 두 개.
     inferenceSg.addIngressRule(bffSg, ec2.Port.tcp(8000), "BFF to inference");
+    inferenceSg.addIngressRule(workerSg, ec2.Port.tcp(8000), "Worker to inference");
     dbSg.addIngressRule(bffSg, ec2.Port.tcp(5432), "BFF to PostgreSQL");
+    dbSg.addIngressRule(workerSg, ec2.Port.tcp(5432), "Worker to PostgreSQL");
   
     // ── 데이터베이스 ──────────────────────────────────────────────
     const database = new rds.DatabaseInstance(this, "Postgres", {
@@ -262,6 +272,10 @@ export class AppStack extends Stack {
         VLM_PROVIDER: isProd ? "gemini" : "mock",
         // 기본 모델 변경이나 지원 종료에 영향받지 않도록 배포 모델을 명시한다.
         GEMINI_MODEL: "gemini-flash-latest",
+        GEMINI_REQUEST_TIMEOUT_MS: "20000",
+        GEMINI_MAX_ATTEMPTS: "3",
+        GEMINI_RETRY_BASE_SECONDS: "0.5",
+        GEMINI_RETRY_MAX_SECONDS: "2.0",
         POSE_BACKEND: isProd ? "rtmlib" : "mock",
         DATA_DIR: "/app/data",
         DB_PATH: "/app/data/poses.db",
@@ -374,6 +388,19 @@ export class AppStack extends Stack {
       ],
     });
 
+    // ── 분석 Job queue ────────────────────────────────────────────
+    const analysisDlq = new sqs.Queue(this, "AnalysisDlq", {
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      retentionPeriod: Duration.days(14),
+    });
+    const analysisQueue = new sqs.Queue(this, "AnalysisQueue", {
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      visibilityTimeout: Duration.seconds(180),
+      retentionPeriod: Duration.days(4),
+      receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: { queue: analysisDlq, maxReceiveCount: 3 },
+    });
+
     // ── BFF 서비스(공개 엣지) ─────────────────────────────────────
     const bffTask = new ecs.FargateTaskDefinition(this, "BffTask", {
       cpu: 512,
@@ -403,6 +430,10 @@ export class AppStack extends Stack {
         OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
         BETA_DATA_BUCKET: betaData.bucketName,
+        JOB_EXECUTION_MODE: props.jobExecutionMode,
+        ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
+        WORKER_VISIBILITY_SECONDS: "180",
+        WORKER_LEASE_SECONDS: "180",
         /**
          * refine 노출 스위치. 추론의 REFINE_ENABLED와 **별도**다(OPS-02).
          *
@@ -469,6 +500,7 @@ export class AppStack extends Stack {
       },
       portMappings: [{ containerPort: 8080 }],
     });
+    analysisQueue.grantSendMessages(bffTask.taskRole);
 
     const bffService = new ecs.FargateService(this, "BffService", {
       cluster,
@@ -482,6 +514,70 @@ export class AppStack extends Stack {
       // 배포 시 진행 중 요청을 마칠 시간(BFF의 SIGTERM 처리와 맞물린다).
       // Job은 아직 프로세스 내에서 도므로 이 시간이 유실 창을 줄여 준다.
       healthCheckGracePeriod: Duration.seconds(60),
+    });
+
+    // HTTP 수신과 분리된 영속 Job worker. inline 단계에서는 서비스만 만들고 0개로 둔다.
+    const workerTask = new ecs.FargateTaskDefinition(this, "AnalysisWorkerTask", {
+      cpu: 512,
+      memoryLimitMiB: 1024,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+    workerTask.addContainer("analysis-worker", {
+      image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, "latest"),
+      command: ["node", "dist/worker.js"],
+      stopTimeout: Duration.seconds(120),
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: "analysis-worker",
+        logRetention: logs.RetentionDays.TWO_WEEKS,
+      }),
+      environment: {
+        NODE_ENV: "production",
+        INFERENCE_BASE_URL: "http://inference.standin.local:8000",
+        BETA_DATA_BUCKET: betaData.bucketName,
+        ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
+        WORKER_VISIBILITY_SECONDS: "180",
+        WORKER_LEASE_SECONDS: "180",
+        ANALYSIS_TIMEOUT_MS: "120000",
+        DATABASE_SSL: "true",
+        PGDATABASE: "standin",
+        DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+      },
+      secrets: {
+        PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
+        PGPORT: ecs.Secret.fromSecretsManager(database.secret!, "port"),
+        PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
+        PGPASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
+      },
+    });
+    betaData.grantRead(workerTask.taskRole);
+    analysisQueue.grantConsumeMessages(workerTask.taskRole);
+
+    const workerService = new ecs.FargateService(this, "AnalysisWorkerService", {
+      cluster,
+      taskDefinition: workerTask,
+      desiredCount: props.jobExecutionMode === "sqs" ? 1 : 0,
+      securityGroups: [workerSg],
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      assignPublicIp: true,
+      circuitBreaker: { rollback: true },
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+    });
+
+    new cloudwatch.Alarm(this, "AnalysisQueueAgeAlarm", {
+      metric: analysisQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1) }),
+      threshold: 120,
+      evaluationPeriods: 2,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+    });
+    new cloudwatch.Alarm(this, "AnalysisDlqAlarm", {
+      metric: analysisDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1) }),
+      threshold: 0,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
     });
 
     const alb = new elbv2.ApplicationLoadBalancer(this, "Alb", {
@@ -559,6 +655,9 @@ export class AppStack extends Stack {
       description: "포즈 라이브러리 번들을 올릴 버킷",
     });
     new CfnOutput(this, "BffServiceName", { value: bffService.serviceName });
+    new CfnOutput(this, "AnalysisWorkerServiceName", { value: workerService.serviceName });
+    new CfnOutput(this, "AnalysisQueueUrl", { value: analysisQueue.queueUrl });
+    new CfnOutput(this, "AnalysisDlqUrl", { value: analysisDlq.queueUrl });
     new CfnOutput(this, "BetaDataBucketName", {
       value: betaData.bucketName,
       description: "Private 90-day bucket for consented closed-beta input images",

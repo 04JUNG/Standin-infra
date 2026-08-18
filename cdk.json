@@ -28,6 +28,7 @@
     "//refineEnabled": "추론 서버의 refine 실행 스위치. 프로덕션에서 켜져 있다.",
     "refineEnabled": true,
     "//refineFeatureEnabled": "BFF의 사용자 노출 스위치. refineEnabled=true일 때만 true 허용. 프로덕션에서 켜져 있다.",
-    "refineFeatureEnabled": true
+    "refineFeatureEnabled": true,
+    "jobExecutionMode": "inline"
   }
 }
