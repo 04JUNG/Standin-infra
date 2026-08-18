@@ -1,0 +1,5 @@
+# 모든 변경에 대해 04JUNG/04jung_owner 팀에 리뷰를 자동 요청한다.
+# PR 작성자 본인은 GitHub이 자동으로 리뷰어에서 제외한다.
+# ⚠ 팀이 코드 오너로 인정되려면 이 레포에 **Write 이상** 권한이 있어야 한다(Read면 무시됨).
+# ⚠ 리뷰 '강제'(머지 차단)는 Settings → Branches → "Require review from Code Owners".
+* @04JUNG/04jung_owner
