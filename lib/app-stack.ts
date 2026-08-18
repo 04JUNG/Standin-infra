@@ -207,6 +207,18 @@ export class AppStack extends Stack {
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
 
+    // 사용량 제한이 client IP를 셀 때 쓰는 솔트. BFF는 IP 원문을 저장하지 않고
+    // sha256(salt + IP)만 카운터 키로 쓴다.
+    //
+    // 없으면 앱이 JWT_SECRET으로 폴백하는데, 그러면 솔트 교체가 JWT 교체와 묶인다.
+    // ⚠ 이 값을 바꾸면 모든 IP 버킷 키가 바뀌어 진행 중인 카운터가 리셋된다
+    //   (창이 최대 1시간이라 실무 영향은 작다).
+    const ipHashSalt = new secretsmanager.Secret(this, "IpHashSalt", {
+      secretName: `standin/${props.appEnv}/ip-hash-salt`,
+      description: "Salt for hashing client IPs into rate-limit buckets",
+      generateSecretString: { passwordLength: 48, excludePunctuation: true },
+    });
+
     // 이메일 인증용 SMTP 설정. 공급자(Gmail·SES SMTP 등)는 배포 후 콘솔에서 채운다.
     // ECS가 JSON 키를 시작 시 해석하므로 값이 비어 있어도 모든 키를 미리 만든다.
     const smtpSecret = new secretsmanager.Secret(this, "SmtpSecret", {
@@ -409,10 +421,36 @@ export class AppStack extends Stack {
         // DATABASE_URL 대신 표준 PG* 변수를 쓴다 — RDS가 만든 시크릿을 그대로 주입할 수 있어
         // 접속 문자열을 따로 만들어 보관하지 않아도 된다. (README의 앱 변경 사항 참고)
         PGDATABASE: "standin",
+
+        // ── 사용량 제한(오픈베타) ──────────────────────────────────
+        // 값은 앱의 코드 기본값과 같다. 여기 적어 두는 이유는 **운영 중 조정**이다 —
+        // env가 없으면 쿼터를 낮추려고 앱 코드를 고쳐 재배포해야 한다.
+        // 0 이하는 앱에서 "제한 없음"으로 읽는다.
+        //
+        // ⚠ XFF 오른쪽에서 신뢰하는 프록시 홉 수. 이 스택의 체인이
+        //   CloudFront → ALB라서 1이다: CloudFront가 뷰어 IP를 덧붙이고 ALB가
+        //   엣지 IP를 덧붙이므로 오른쪽에서 2번째가 실제 client IP다.
+        //   CloudFront는 클라가 보낸 XFF도 그대로 전달하므로(ALL_VIEWER_EXCEPT_HOST_HEADER)
+        //   왼쪽은 위조 가능하다 — 홉 수를 실제 프록시 수보다 크게 잡으면 IP 제한이 우회된다.
+        //   체인이 바뀌면(WAF 삽입, ALB 직접 노출 등) 이 값도 같이 바꿔야 한다.
+        TRUSTED_PROXY_HOPS: "1",
+        QUOTA_INSTALLATION_DAILY: "10",
+        QUOTA_INSTALLATION_CONCURRENT: "1",
+        // 전체 일일 상한. 오픈베타_계획_2026-08-13 §4-2의 산식에서 나온 값이다:
+        // (월 10만원 − AWS 고정비 5만) ÷ 건당 4원 ≈ 12,500회/월 ≈ 일 416회 → 400.
+        // ⚠ 입력값 둘(AWS 고정비 실측·Gemini 건당 단가)이 아직 측정 전이라 잠정치다.
+        //   단가가 4원을 크게 넘으면 이 값이 아니라 QUOTA_INSTALLATION_DAILY를 먼저 낮춘다.
+        QUOTA_GLOBAL_DAILY: "400",
+        ANALYSIS_STALE_AFTER_SECONDS: "300",
+        RATE_IP_REGISTER: "5",
+        RATE_IP_REGISTER_WINDOW: "3600",
+        RATE_IP_ANALYZE: "5",
+        RATE_IP_ANALYZE_WINDOW: "60",
       },
       secrets: {
         JWT_SECRET: ecs.Secret.fromSecretsManager(jwtSecret),
         BETA_REVIEW_ADMIN_TOKEN: ecs.Secret.fromSecretsManager(betaReviewSecret),
+        IP_HASH_SALT: ecs.Secret.fromSecretsManager(ipHashSalt),
         PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
         PGPORT: ecs.Secret.fromSecretsManager(database.secret!, "port"),
         PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),

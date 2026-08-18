@@ -26,7 +26,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
-- **추론 배포 정책은 refine flag를 따른다.** off에서는 min/max 100/200 무중단 롤링, on에서는 로컬 조정본 정합성을 위해 0/100 단일 태스크 교체를 쓴다. 아래 refine 절 참고. BFF는 항상 min/max 100/200 무중단 롤링이다.
+- **두 서비스 모두 항상 무중단 롤링이다**(min/max 100/200 + AZ 재분산). 예전에는 refine이 켜지면 추론만 0/100 단일 태스크 교체로 바꿨는데, 조정본 전달 방식이 바뀌면서 그 제약이 사라졌다(#13). `scripts/assert-refine-flags.mjs`가 회귀를 막는다.
 
 ## refine (포즈 미세조정) 운영
 
@@ -42,33 +42,41 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 90일 lifecycle, 동의 철회 시 삭제 스윕, `betaData.grantReadWrite(bffTask.taskRole)`가
 그대로 적용된다. 쓰는 쪽은 BFF뿐이므로 **추론 태스크에는 S3 쓰기 권한을 주지 않는다.**
 
-### 2. refine 활성화 시 추론 서비스는 단일 태스크로 교체된다
+### 2. 배포 설정은 refine과 무관하다 (다운타임 없음)
 
-refine이 꺼져 있을 때는 `minHealthyPercent: 100` / `maxHealthyPercent: 200`과 AZ 재분산을
-사용해 무중단 롤링한다. refine이 켜지면 `0 / 100`과 AZ 재분산 비활성화로 전환한다.
-롤링 배포 중 구·신 태스크를 동시에 띄우면 Cloud Map이 두 주소를 모두 돌려주므로 BFF의
-`POST /refine`과 곧이은 조정본 GET이 서로 다른 태스크에 떨어져 404가 날 수 있기 때문이다.
+추론·BFF 모두 `minHealthyPercent: 100` / `maxHealthyPercent: 200` + AZ 재분산으로 **항상
+무중단 롤링**한다. refine 플래그가 이 값을 바꾸지 않는다.
 
-**refine 활성화 시 대가**: 배포 중 추론이 잠깐(수십 초~2분) 끊긴다. BFF는 계속 살아 있고 그 사이의 `/analyze`
-실패는 이미 job failed로 처리되므로 클로즈베타 규모에서는 감수한다. 동시 처리량을 위해
-태스크를 늘려야 할 때가 오면 조정본 전달 방식(추론이 S3에 직접 쓰기)을 먼저 바꿔야 한다.
+예전에는 refine이 켜지면 추론을 `0 / 100` 단일 태스크 교체로 전환했다. 조정본이 생성된
+로컬 태스크에서 BFF가 곧바로 GET해야 했고, 구·신 태스크가 함께 Cloud Map에 등록되면 그
+GET이 조정본을 갖지 않은 쪽에 닿아 404가 났기 때문이다. 대가로 배포 중 추론이 수십 초~2분
+끊겼다.
 
-### 3. flag는 두 개이고 기본값은 둘 다 off
+이제 추론 서버가 `/refine` 응답에 BVH 본문을 실어 보내므로 **두 번째 요청 자체가 없다**
+(`Standin-server/docs/REFINE_HANDOFF.md` §3). 로컬 디스크에 의존하는 경로가 사라져 태스크
+공존이 무해해졌고, 무중단 롤링으로 되돌렸다(#13). `assert-refine-flags.mjs`가 100/200과
+AZ 재분산을 상수로 못 박아 회귀를 막는다.
+
+### 3. flag는 두 개이고 프로덕션은 둘 다 on
 
 | 서비스 | 변수 | 현재 값 |
 |---|---|---|
-| 추론 | `REFINE_ENABLED` | `0` |
+| 추론 | `REFINE_ENABLED` | `1` |
 | 추론 | `REFINE_MOVE_GATE` | `0` (P2 이동량 하드 게이트 보류, 진단은 기록) |
 | 추론 | `REFINE_COLLISION_GATE` | `1` (P3a 손·전완-몸통 관통 복구) |
-| BFF | `REFINE_FEATURE_ENABLED` | `false` |
+| BFF | `REFINE_FEATURE_ENABLED` | `true` |
 | BFF | `REFINE_TIMEOUT_MS` | `5000` |
 
-두 배포 플래그는 CDK context로 제어하며 기본값은 모두 off다.
+두 배포 플래그는 CDK context로 제어한다. **`cdk.json`의 값이 실제 배포된 상태와 같아야 한다** —
+아래 「cdk.json은 배포 상태의 사본이다」 참고.
 
-| CDK context | 기본값 | ECS 환경변수 |
+| CDK context | `cdk.json` | ECS 환경변수 |
 |---|---|---|
-| `refineEnabled` | `false` | 추론 `REFINE_ENABLED=0|1` |
-| `refineFeatureEnabled` | `false` | BFF `REFINE_FEATURE_ENABLED=false|true` |
+| `refineEnabled` | `true` | 추론 `REFINE_ENABLED=0|1` |
+| `refineFeatureEnabled` | `true` | BFF `REFINE_FEATURE_ENABLED=false|true` |
+
+코드 기본값(`bin/standin.ts`)은 둘 다 `false`다. 단계적으로 켜던 시절의 안전 기본값이며,
+지금은 `cdk.json`이 명시적으로 `true`를 준다.
 
 `refineFeatureEnabled=true`는 `refineEnabled=true`와 함께만 허용된다. BFF 노출만
 단독으로 켜면 synth 단계에서 실패한다.
@@ -96,18 +104,83 @@ npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxx
 4. staging에서 조정본 영속화와 export 검증
 5. 추론 → BFF 순으로 flag on
 
+## 사용량 제한 운영 (오픈베타)
+
+BFF는 로그인 없이 설치 단위로 쓰이므로 서버가 사용량을 강제한다. 카운터 정본은 RDS
+(`usage_counters` 테이블)라 다중 태스크·재배포에도 유지된다. 정책값은 task definition의
+환경변수로 노출돼 있어 **앱 코드를 고치지 않고 `cdk deploy`만으로 조정**할 수 있다.
+
+| ECS 환경변수 | 현재 값 | 의미 |
+|---|---:|---|
+| `QUOTA_INSTALLATION_DAILY` | `10` | 설치별 일일 분석 횟수(KST 자정 리셋) |
+| `QUOTA_INSTALLATION_CONCURRENT` | `1` | 설치별 동시 분석 개수 |
+| `QUOTA_GLOBAL_DAILY` | `400` | 서비스 전체 일일 상한. 오픈베타 계획 §4-2 산식의 잠정치(단가 실측 후 확정) |
+| `ANALYSIS_STALE_AFTER_SECONDS` | `300` | 이 시간 넘게 진행 중인 Job은 유실로 보고 정리 |
+| `RATE_IP_REGISTER` / `_WINDOW` | `5` / `3600` | IP별 설치 발급 burst |
+| `RATE_IP_ANALYZE` / `_WINDOW` | `5` / `60` | IP별 분석 요청 burst |
+| `TRUSTED_PROXY_HOPS` | `1` | XFF 오른쪽에서 신뢰하는 프록시 홉 수 |
+| `IP_HASH_SALT` | Secrets Manager | IP 해시 솔트(`standin/<env>/ip-hash-salt`, 자동 생성) |
+
+`QUOTA_GLOBAL_DAILY`를 빼면 앱의 코드 기본값과 같은 값이다 — 목적은 운영 중 조정할 손잡이를 만드는 것이다.
+0 이하는 앱이 "제한 없음"으로 읽는다.
+
+### ⚠ `TRUSTED_PROXY_HOPS`는 요청 체인에 묶여 있다
+
+체인이 `클라 → CloudFront → ALB → BFF`이므로 BFF가 보는 `X-Forwarded-For`는
+`…, <뷰어 IP>, <CloudFront 엣지 IP>`다. 즉 **오른쪽에서 2번째가 실제 client IP**이고 값은 `1`이다.
+
+CloudFront가 `ALL_VIEWER_EXCEPT_HOST_HEADER`로 클라가 보낸 XFF까지 그대로 전달하므로
+왼쪽 항목은 위조 가능하다. 이 값을 실제 프록시 수보다 **크게** 잡으면 클라가 헤더를 조작해
+IP 제한을 통째로 우회한다. WAF를 앞에 끼우거나 ALB를 직접 노출하는 등 체인이 바뀌면
+이 값도 함께 바꾼다. ALB가 CloudFront 비밀 헤더 없는 요청을 403으로 막는 것이 이 전제를 지킨다.
+
+IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키로 쓰고, IPv6는 `/64`로 묶는다.
+솔트를 교체하면 진행 중인 IP 카운터가 리셋된다(창이 최대 1시간이라 영향은 작다).
+
+### 운영자 kill switch
+
+분석을 즉시 중단·재개하는 스위치는 **인프라가 아니라 DB**(`service_flags`)에 있다. 재배포가
+필요 없고 전 태스크에 최대 5초 안에 전파된다. 조작은 BFF의 관리자 API로 한다 —
+`Standin-app-server/README.md`의 「Kill switch」 절 참고. 토큰은
+`standin/<env>/beta-review-token` 시크릿이다.
+
+## cdk.json은 배포 상태의 사본이다
+
+`cdk.json`의 context 값은 **실제로 배포된 스택과 같아야 한다.** `-c`로 넘긴 값만 맞고
+파일은 다른 값을 담고 있으면, 다음 사람이 `-c` 없이 `cdk deploy`를 돌리는 순간 그 차이가
+그대로 프로덕션에 적용된다.
+
+| context | 값 | 틀리면 무슨 일이 나나 |
+|---|---|---|
+| `appEnv` | `production` | `development`면 실서비스가 **mock VLM·합성 포즈 라이브러리로 뒤집힌다** |
+| `publicUrl` | CloudFront URL | 비면 OAuth 콜백과 이메일 인증 링크가 깨진다 |
+| `refineEnabled` | `true` | `false`면 refine이 꺼진다(배포는 항상 무중단이라 다운타임은 없다) |
+| `refineFeatureEnabled` | `true` | `false`면 클라이언트에서 refine이 사라진다 |
+
+> 실제로 겪었다. 사용량 제한 env를 배포하려고 `cdk diff`를 돌렸더니 `REFINE_ENABLED 1→0`,
+> `REFINE_FEATURE_ENABLED true→false`가 함께 나왔다 — 배포된 스택은 refine이 켜져 있는데
+> `cdk.json`은 `false`였기 때문이다. 이 값들을 커밋해 두지 않으면 매번 `-c`를 정확히
+> 기억해야 하고, 한 번 빠뜨리면 의도하지 않은 기능 롤백이 조용히 나간다.
+
+**배포 상태를 바꿀 때는 `cdk.json`을 같은 PR에서 고친다.** `-c`는 일회성 실험에만 쓴다.
+배포 전 `npx cdk diff StandinApp`으로 **의도한 리소스만 바뀌는지** 반드시 확인한다.
+
 ## 배포는 2단계로 나눈다
 
 `appEnv`로 실행 환경을 전환하고, 두 refine 컨텍스트로 기능 활성화 단계를 제어한다.
 코드를 고치거나 ECS 태스크 정의를 콘솔에서 직접 수정하지 않는다.
 
-| | 1단계 `development` (기본) | 2단계 `production` |
+| | 1단계 `development` | 2단계 `production` (현재 `cdk.json` 값) |
 |---|---|---|
 | 포즈 라이브러리 | 합성(자동 생성) | S3 번들 — 없으면 **기동 실패** |
 | VLM · 포즈 백엔드 | mock | gemini · rtmlib — mock으로 폴백하면 **기동 실패** |
 | 목적 | ALB·RDS·서비스 디스커버리·시크릿 주입·CI 배선 검증 | 실서비스 |
 
 1단계는 실 라이브러리도 API 키도 없이 뜬다. **인프라가 실제로 물리는지 먼저 확인하고**, 준비되면 2단계로 넘어간다.
+
+⚠ 아래 명령들은 **최초 구축 기록**이다. 지금은 `cdk.json`이 `appEnv=production`을 담고 있으므로
+`-c` 없는 `npx cdk deploy StandinApp`이 곧 프로덕션 배포다. 1단계로 되돌리려면 `-c appEnv=development`를
+명시해야 하고, 그건 실서비스를 mock으로 뒤집는 동작이다.
 
 ```bash
 npm install

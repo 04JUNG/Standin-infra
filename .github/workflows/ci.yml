@@ -39,7 +39,15 @@ jobs:
       - name: Synthesize CloudFormation
         run: npm run synth -- --no-lookups
 
-      - name: Verify default refine flags
+      # cdk.json이 배포 상태(둘 다 on)를 담으므로 -c 없는 synth가 곧 프로덕션이다.
+      # 이 단계가 cdk.json 드리프트 감지기다 — 파일과 배포가 어긋나면 여기서 걸린다.
+      - name: Verify default refine flags match production
+        run: node scripts/assert-refine-flags.mjs 1 true
+
+      - name: Synthesize refine off
+        run: npm run synth -- --no-lookups -c refineEnabled=false -c refineFeatureEnabled=false
+
+      - name: Verify refine off flags
         run: node scripts/assert-refine-flags.mjs 0 false
 
       - name: Synthesize refine canary
@@ -47,12 +55,6 @@ jobs:
 
       - name: Verify refine canary flags
         run: node scripts/assert-refine-flags.mjs 1 false
-
-      - name: Synthesize full refine rollout
-        run: npm run synth -- --no-lookups -c refineEnabled=true -c refineFeatureEnabled=true
-
-      - name: Verify full refine flags
-        run: node scripts/assert-refine-flags.mjs 1 true
 
       - name: Reject BFF-only refine exposure
         shell: bash
