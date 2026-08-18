@@ -6,7 +6,9 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 
 [![Standin AWS 아키텍처](docs/architecture/standin-aws-architecture.png)](docs/architecture/standin-aws-architecture.html)
 
-> `Standin-infra`의 현재 CDK 선언 기준이다. CloudWatch는 ECS 컨테이너 로그(14일 보존)와 Container Insights만 구성되어 있으며, 대시보드·알람·SNS 알림은 아직 없다. 이미지를 클릭하면 확대 가능한 다이어그램을 볼 수 있다.
+> `Standin-infra`의 현재 CDK 선언 기준이다. 이미지를 클릭하면 확대 가능한 다이어그램을 볼 수 있다.
+>
+> 관측성은 CloudWatch 대신 **구조화 로그 → BFF 자체 집계 → 디스코드 알림**으로 간다. CloudWatch는 컨테이너 로그(14일)와 Container Insights만 남기고 일상적으로 열지 않는다. 아래 「인프라 이벤트 알림」·「로그 출하 경로」·「운영 대시보드」 절과 마스터독스의 「관측성 — 로그·모니터링·디스코드 알림」 참고. 다이어그램에는 EventBridge·Lambda·외부 감시자가 아직 반영되지 않았다.
 
 ## 스택 구성
 
@@ -315,15 +317,71 @@ python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
 
 디스코드 채널에서 **채널 설정 → 연동 → 웹후크**로 발급한다. **웹훅 URL 자체가 비밀이다** — URL을 아는 누구나 그 채널에 글을 쓸 수 있으므로 코드·문서·이슈에 남기지 않는다.
 
-값이 비어 있으면 두 서버의 알림기는 조용히 no-op으로 동작한다. 기동에는 문제가 없고 알림만 나가지 않는다. 채널을 하나만 만든 경우 그 URL을 세 키에 모두 넣으면 등급별 색상만 다르게 한 채널로 모인다.
+값이 비어 있으면 알림기는 조용히 no-op으로 동작한다. 기동에는 문제가 없고 알림만 나가지 않는다.
 
-P1에 `@here` 멘션을 걸려면 합성 시점에 환경변수를 준다(기본값은 비어 있다 — 야간에 사람을 깨울지는 팀이 정할 문제다).
+**P1에는 `@here` 멘션이 기본으로 붙는다**(2026-08-18 팀 결정). 새벽에도 울린다는 뜻이므로, 어떤 사건을 P1로 올릴지는 그때마다 "이게 새벽 3시에 울려도 되는가"로 판단한다. 야간 호출을 끄려면 합성 시점에 비운다.
 
 ```bash
-DISCORD_ALERT_MENTION="@here" npx cdk deploy StandinApp
+DISCORD_ALERT_MENTION="" npx cdk deploy StandinApp
 ```
 
 설계 정본은 마스터독스의 「관측성 — 로그·모니터링·디스코드 알림」이다.
+
+### 7. 인프라 이벤트 알림 (자동)
+
+`InfraAlerts` Lambda와 EventBridge 규칙 3개가 스택에 함께 만들어진다. 채울 값은 없다 — `standin/discord`를 실행 시점에 읽는다.
+
+여기서 잡는 사건은 **앱이 원리적으로 보고할 수 없는 것들**이다.
+
+| 규칙 | 잡는 것 | 등급 |
+|---|---|---|
+| `TaskStoppedRule` | 태스크 기동 실패·OOM(exit 137)·필수 컨테이너 비정상 종료 | P1 |
+| `DeploymentStateRule` | 서킷브레이커 롤백(`SERVICE_DEPLOYMENT_FAILED`) / 배포 완료 | P1 / P3 |
+| `DatabaseEventRule` | RDS 저장공간·장애조치·유지보수 | P1 / P2 |
+
+정상 종료(롤링 배포·스케일 인)는 Lambda가 걸러 낸다. 이벤트 패턴만으로는 `stopCode`와 `exitCode` 조합을 판단할 수 없어서 코드에서 거른다.
+
+**롤백 알림이 이 셋 중 가장 값어치가 크다.** 서킷브레이커가 롤백하면 옛 태스크가 계속 돌아 서비스는 "정상"으로 보이고, 새 코드가 반영되지 않은 것을 아무도 모른다.
+
+### 8. 외부 헬스 감시자 (AWS 밖, 선택이지만 권장)
+
+위 7번까지는 전부 같은 AWS 계정 안에 있다. 계정·리전이 통째로 흔들리면 알림도 함께 죽는다. 그 마지막 구멍은 `watchdog/cloudflare`의 Cloudflare Worker가 메운다 — 1분마다 CloudFront `/healthz`를 밖에서 두드리고 2회 연속 실패하면 P1을 보낸다.
+
+배포는 [watchdog/cloudflare/README.md](watchdog/cloudflare/README.md) 참고. Cloudflare 무료 등급으로 충분하다.
+
+## 로그 출하 경로
+
+기본은 CloudWatch Logs다(`awslogs` 드라이버, 보존 14일).
+
+```bash
+npx cdk deploy StandinApp -c logRetentionDays=3          # 보존만 줄인다
+npx cdk deploy StandinApp -c logShipping=firelens        # 외부 수집기로 보낸다
+```
+
+| 값 | 동작 |
+|---|---|
+| `cloudwatch`(기본) | ECS `awslogs` 드라이버 → CloudWatch Logs |
+| `firelens` | fluent-bit 사이드카 → Loki/Grafana Cloud. CloudWatch에는 사이드카 자신의 로그만 3일 남는다 |
+
+`firelens`로 켜면 `standin/log-shipping` 시크릿(`host`·`user`·`password`)이 함께 만들어진다. 값을 채운 뒤 재배포한다.
+
+**언제 켜나**: 계획 문서 §8의 기준은 "3단계 자체 대시보드로 원인을 못 찾아 CloudWatch 콘솔을 여는 일이 월 3회를 넘을 때"다. 그 전에 세우면 유지비만 나간다. 지금은 스위치만 배선돼 있다.
+
+⚠ `firelens` 경로는 **실제 수집기에 붙여 검증한 적이 없다.** 처음 켤 때는 반드시 development에서 먼저 확인한다.
+
+`logRetentionDays`는 CloudWatch가 받는 값만 허용한다(1·3·5·7·14·30·60·90·180·365). 기본 14일은 클로즈베타 데이터 수집 문서의 "운영 로그" 정책과 맞물려 있으므로 줄이기 전에 팀 확인이 필요하다.
+
+## 운영 대시보드
+
+지표는 BFF가 1분 롤업으로 RDS에 쌓고, 화면도 BFF가 낸다.
+
+```
+https://<CloudFrontUrl>/v1/admin/ops/dashboard
+```
+
+관리자 토큰(`standin/<env>/beta-review-token`)을 화면에서 입력한다. 주소창에 `?token=`으로 넘겨도 되지만 페이지가 로드 즉시 지운다.
+
+별도 박스를 세우지 않은 이유: 데이터가 isolated 서브넷의 RDS에 있어 **어떤 대시보드든 BFF를 거쳐야 읽는다.** 따로 세워도 BFF가 죽으면 화면만 뜨고 숫자는 안 나온다 — 월 $5~14를 내고 독립성을 사지 못한다. 그 독립성은 위 8번 외부 감시자가 월 $0에 준다.
 
 ## CI/CD
 

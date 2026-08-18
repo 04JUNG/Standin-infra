@@ -43,6 +43,30 @@ const jobExecutionMode = (app.node.tryGetContext("jobExecutionMode") as string) 
   ? ("sqs" as const)
   : ("inline" as const);
 
+/**
+ * 로그 출하 경로(계획 5단계).
+ *   cloudwatch — 기본. ECS awslogs 드라이버로 CloudWatch Logs에 남긴다.
+ *   firelens   — fluent-bit 사이드카로 외부 수집기(Loki/Grafana Cloud)에 보낸다.
+ *
+ * 기본을 바꾸지 않는 이유는 계획 문서 §8에 있다. 3단계 자체 대시보드로 원인을 못 찾아
+ * CloudWatch 콘솔을 여는 일이 월 3회를 넘을 때 전환한다. 그 전에 세우면 유지비만 나간다.
+ */
+const logShipping = (app.node.tryGetContext("logShipping") as string) === "firelens"
+  ? ("firelens" as const)
+  : ("cloudwatch" as const);
+
+/**
+ * 컨테이너 로그 보존일.
+ *
+ * ⚠ 기본 14일은 클로즈베타 데이터 수집 문서의 "운영 로그" 정책과 맞물려 있다.
+ *   계획 문서는 3일로 줄이자고 제안하지만 팀 확인 전까지 기본값을 바꾸지 않는다.
+ *   줄이려면 `-c logRetentionDays=3`.
+ */
+const logRetentionDays = Number(app.node.tryGetContext("logRetentionDays") ?? 14);
+if (!Number.isInteger(logRetentionDays) || logRetentionDays <= 0) {
+  throw new Error("logRetentionDays must be a positive integer");
+}
+
 // 이미지는 앱보다 오래 산다 — 앱 스택을 지웠다 다시 만들어도 롤백 대상이 남아야 한다.
 const registry = new RegistryStack(app, "StandinRegistry", { env });
 
@@ -64,6 +88,8 @@ new AppStack(app, "StandinApp", {
   refineEnabled,
   refineFeatureEnabled,
   jobExecutionMode,
+  logShipping,
+  logRetentionDays,
 });
 
 cdk.Tags.of(app).add("Project", "Standin");

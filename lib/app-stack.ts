@@ -6,6 +6,9 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
@@ -34,6 +37,13 @@ export interface AppStackProps extends StackProps {
   refineFeatureEnabled: boolean;
   /** 기본 inline. 앱·queue 검증 뒤 sqs로 전환하면 worker desiredCount도 1이 된다. */
   jobExecutionMode: "inline" | "sqs";
+  /**
+   * 로그 출하 경로(계획 5단계). 기본 cloudwatch.
+   * firelens로 바꾸면 fluent-bit 사이드카가 외부 수집기로 보내고 CloudWatch에는 남지 않는다.
+   */
+  logShipping: "cloudwatch" | "firelens";
+  /** 컨테이너 로그 보존일. 기본 14일(클로즈베타 데이터 정책과 맞물려 있다). */
+  logRetentionDays: number;
 }
 
 /**
@@ -265,16 +275,100 @@ export class AppStack extends Stack {
 
     /**
      * P1 알림에 붙일 멘션. 비밀이 아니므로 환경변수로 둔다.
-     * 켜려면 `DISCORD_ALERT_MENTION="@here" npx cdk deploy StandinApp` 로 재배포한다.
-     * 기본이 비어 있는 이유: 야간에 사람을 깨울지는 팀이 정할 문제지 코드가 정할 문제가 아니다.
+     *
+     * 기본값이 `@here`인 이유: 팀이 P1을 "사람을 깨우는 등급"으로 정했다(2026-08-18).
+     * 야간 호출을 끄려면 `DISCORD_ALERT_MENTION="" npx cdk deploy StandinApp`.
+     * P1을 남발하지 않는 것이 이 기본값을 지탱하는 전제다 — 등급을 올릴 때마다
+     * 그 알림이 새벽 3시에 울려도 되는지 먼저 따진다.
      */
-    const discordAlertMention = process.env.DISCORD_ALERT_MENTION ?? "";
+    const discordAlertMention = process.env.DISCORD_ALERT_MENTION ?? "@here";
 
     // CloudFront만 ALB를 통과할 수 있게 하는 origin 검증값. 값은 코드나 출력에 남기지 않는다.
     const originVerifySecret = new secretsmanager.Secret(this, "OriginVerifySecret", {
       description: "Shared secret used to verify CloudFront requests at the ALB",
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
+
+    // ── 로그 출하(계획 5단계) ─────────────────────────────────────
+    //
+    // 기본은 CloudWatch다. 계획 문서 §8의 전환 기준은 "3단계 자체 대시보드로 원인을 못 찾아
+    // CloudWatch 콘솔을 여는 일이 월 3회를 넘을 때"다. 그 전에 수집 인프라를 세우면
+    // 유지비만 나간다. 여기서는 그날이 왔을 때 **코드를 새로 쓰지 않고 스위치만 넘기도록**
+    // 배선만 해 둔다.
+    //
+    // ⚠ firelens 경로는 실제 수집기(Grafana Cloud/Loki)에 붙여 검증한 적이 없다.
+    //   처음 켤 때는 반드시 development에서 먼저 확인한다.
+    const ALLOWED_RETENTION_DAYS = [1, 3, 5, 7, 14, 30, 60, 90, 180, 365];
+    if (!ALLOWED_RETENTION_DAYS.includes(props.logRetentionDays)) {
+      // CloudWatch는 아무 숫자나 받지 않는다. 배포 중에 실패하지 말고 합성에서 막는다.
+      throw new Error(
+        `logRetentionDays must be one of ${ALLOWED_RETENTION_DAYS.join(", ")} (got ${props.logRetentionDays})`,
+      );
+    }
+    const logRetention = props.logRetentionDays as logs.RetentionDays;
+
+    // 수집기 접속 정보. firelens를 켤 때만 만든다 — 안 쓰는 시크릿에 매달 요금을 내지 않는다.
+    const logShippingSecret =
+      props.logShipping === "firelens"
+        ? new secretsmanager.Secret(this, "LogShippingSecret", {
+            secretName: "standin/log-shipping",
+            description: "External log collector credentials (Loki/Grafana Cloud)",
+            secretObjectValue: {
+              host: SecretValue.unsafePlainText(""), // 예: logs-prod-013.grafana.net
+              user: SecretValue.unsafePlainText(""), // 테넌트 ID
+              password: SecretValue.unsafePlainText(""), // API 키
+            },
+          })
+        : undefined;
+
+    /**
+     * 컨테이너 로그 드라이버를 만든다. 태스크마다 부른다(사이드카는 태스크 단위라서다).
+     *
+     * firelens 모드에서는 fluent-bit 사이드카가 로그를 받아 외부로 보낸다. 사이드카 자신의
+     * 로그는 CloudWatch에 짧게 남긴다 — 출하가 깨졌을 때 그 사실을 알 수 있는 유일한 경로다.
+     */
+    const containerLogging = (
+      taskDefinition: ecs.FargateTaskDefinition,
+      streamPrefix: string,
+    ): ecs.LogDriver => {
+      if (props.logShipping === "cloudwatch" || !logShippingSecret) {
+        return ecs.LogDrivers.awsLogs({ streamPrefix, logRetention });
+      }
+
+      taskDefinition.addFirelensLogRouter("log-router", {
+        image: ecs.ContainerImage.fromRegistry(
+          "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable",
+        ),
+        firelensConfig: { type: ecs.FirelensLogRouterType.FLUENTBIT },
+        logging: ecs.LogDrivers.awsLogs({
+          streamPrefix: "log-router",
+          logRetention: logs.RetentionDays.THREE_DAYS,
+        }),
+        memoryReservationMiB: 50,
+        // fluent-bit의 forward 입력 포트. 태스크 안에서만 쓰이지만 선언하지 않으면
+        // CDK가 "포트 없는 컨테이너"로 보고 합성을 막는다.
+        portMappings: [{ containerPort: 24224 }],
+      });
+
+      return ecs.LogDrivers.firelens({
+        options: {
+          Name: "loki",
+          // 값은 배포 후 콘솔에서 시크릿에 채운다. 호스트는 비밀이 아니지만 계정마다
+          // 다르므로 같은 시크릿에 모아 둔다(두 곳에 두면 반드시 어긋난다).
+          port: "443",
+          tls: "on",
+          // 라벨은 여기서 고정한다. 로그 본문의 필드를 라벨로 올리면 카디널리티가 터진다
+          // (requestId를 라벨로 만들면 인덱스가 요청 수만큼 늘어난다).
+          labels: `job=standin,service=${streamPrefix}`,
+          line_format: "json",
+        },
+        secretOptions: {
+          host: ecs.Secret.fromSecretsManager(logShippingSecret, "host"),
+          http_user: ecs.Secret.fromSecretsManager(logShippingSecret, "user"),
+          http_passwd: ecs.Secret.fromSecretsManager(logShippingSecret, "password"),
+        },
+      });
+    };
 
     // ── 추론 서비스(내부 전용) ────────────────────────────────────
     const inferenceTask = new ecs.FargateTaskDefinition(this, "InferenceTask", {
@@ -288,10 +382,7 @@ export class AppStack extends Stack {
 
     inferenceTask.addContainer("inference", {
       image: ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, "latest"),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "inference",
-        logRetention: logs.RetentionDays.TWO_WEEKS,
-      }),
+      logging: containerLogging(inferenceTask, "inference"),
       environment: {
         APP_ENV: props.appEnv,
         // 1단계는 mock으로 인프라 배선만 확인하고, 2단계에서 실모델로 넘어간다.
@@ -446,10 +537,7 @@ export class AppStack extends Stack {
 
     bffTask.addContainer("bff", {
       image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, "latest"),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "bff",
-        logRetention: logs.RetentionDays.TWO_WEEKS,
-      }),
+      logging: containerLogging(bffTask, "bff"),
       environment: {
         PORT: "8080",
         NODE_ENV: "production",
@@ -564,10 +652,7 @@ export class AppStack extends Stack {
       image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, "latest"),
       command: ["node", "dist/worker.js"],
       stopTimeout: Duration.seconds(120),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "analysis-worker",
-        logRetention: logs.RetentionDays.TWO_WEEKS,
-      }),
+      logging: containerLogging(workerTask, "analysis-worker"),
       environment: {
         NODE_ENV: "production",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
@@ -679,6 +764,73 @@ export class AppStack extends Stack {
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+    });
+
+    // ── 인프라 이벤트 알림(계획 4단계) ────────────────────────────
+    //
+    // 앱 안의 알림기가 **원리적으로 보고할 수 없는** 사건들을 여기서 잡는다.
+    //   · 태스크가 아예 뜨지 못함 — 알림기가 실행되지도 않는다.
+    //   · OOM/강제 종료 — 죽는 순간 알림 버퍼도 함께 사라진다.
+    //   · 배포 서킷브레이커 롤백 — 옛 태스크가 계속 돌아 서비스는 "정상"으로 보인다.
+    //
+    // CloudWatch 알람이 아니라 EventBridge 이벤트 버스를 쓴다. 임계값을 정할 필요가 없고
+    // 사건이 일어난 그 순간 한 건이 오며, 비용도 사실상 0이다.
+    const infraAlerts = new lambda.Function(this, "InfraAlerts", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset("lambda/infra-alerts"),
+      // 웹훅 한 번 호출이 전부다. 길게 잡아 둘 이유가 없다.
+      timeout: Duration.seconds(10),
+      memorySize: 128,
+      logRetention: logs.RetentionDays.ONE_WEEK,
+      environment: {
+        DISCORD_SECRET_ARN: discordSecret.secretArn,
+        DISCORD_ALERT_MENTION: discordAlertMention,
+      },
+      description: "ECS·RDS 이벤트를 디스코드로 알린다(앱이 보고할 수 없는 사건)",
+    });
+    // 값을 환경변수로 굽지 않는다 — 실행 시점에 읽어야 웹훅을 교체해도 재배포가 필요 없다.
+    discordSecret.grantRead(infraAlerts);
+
+    // 태스크 종료. 정상 종료(배포·스케일 인)까지 오는 것은 Lambda가 걸러 낸다 —
+    // 이벤트 패턴만으로는 exitCode·stopCode 조합을 판단할 수 없다.
+    new events.Rule(this, "TaskStoppedRule", {
+      description: "Standin 태스크가 멈추면 알린다",
+      eventPattern: {
+        source: ["aws.ecs"],
+        detailType: ["ECS Task State Change"],
+        detail: {
+          clusterArn: [cluster.clusterArn],
+          lastStatus: ["STOPPED"],
+        },
+      },
+      targets: [new targets.LambdaFunction(infraAlerts)],
+    });
+
+    // 배포 결과. 롤백은 "새 코드가 반영되지 않았다"는 뜻이라 가장 값어치 있는 알림이다.
+    new events.Rule(this, "DeploymentStateRule", {
+      description: "Standin 서비스 배포 실패·완료를 알린다",
+      eventPattern: {
+        source: ["aws.ecs"],
+        detailType: ["ECS Deployment State Change"],
+        resources: [
+          bffService.serviceArn,
+          inferenceService.serviceArn,
+          workerService.serviceArn,
+        ],
+      },
+      targets: [new targets.LambdaFunction(infraAlerts)],
+    });
+
+    // RDS. 저장공간·장애조치는 앱이 느려지거나 죽기 **전에** 오는 유일한 신호다.
+    new events.Rule(this, "DatabaseEventRule", {
+      description: "Standin RDS 인스턴스 이벤트를 알린다",
+      eventPattern: {
+        source: ["aws.rds"],
+        detailType: ["RDS DB Instance Event"],
+        resources: [database.instanceArn],
+      },
+      targets: [new targets.LambdaFunction(infraAlerts)],
     });
 
     // ── 출력 ─────────────────────────────────────────────────────
