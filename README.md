@@ -303,6 +303,28 @@ python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
 
 시크릿 값을 바꾼 뒤에는 BFF ECS 서비스를 강제 재배포해야 새 태스크가 값을 읽는다. 개인 Gmail을 쓸 경우 일반 계정 비밀번호가 아니라 앱 비밀번호를 사용한다. SES SMTP를 쓸 경우 SES 콘솔에서 별도로 발급한 SMTP 자격증명을 사용하며 IAM 액세스 키를 그대로 넣지 않는다.
 
+### 6. 장애 알림 디스코드 웹훅
+
+`standin/discord` 시크릿에 채널별 웹훅 URL을 채운다. **키 3개가 빈 값으로 이미 만들어져 있다** — SMTP·OAuth와 같은 이유다(ECS가 없는 키를 참조하면 컨테이너가 시작조차 못 한다).
+
+| 키 | 채널 | 등급 |
+|---|---|---|
+| `webhookAlert` | `#standin-alert` | P1 — 기동 실패·DB 접속 불가·추론 헬스 연속 실패 |
+| `webhookWarn` | `#standin-warn` | P2 — 처리되지 않은 예외·분석 실패 |
+| `webhookOps` | `#standin-ops` | P3 — 기동·배포·요약 |
+
+디스코드 채널에서 **채널 설정 → 연동 → 웹후크**로 발급한다. **웹훅 URL 자체가 비밀이다** — URL을 아는 누구나 그 채널에 글을 쓸 수 있으므로 코드·문서·이슈에 남기지 않는다.
+
+값이 비어 있으면 두 서버의 알림기는 조용히 no-op으로 동작한다. 기동에는 문제가 없고 알림만 나가지 않는다. 채널을 하나만 만든 경우 그 URL을 세 키에 모두 넣으면 등급별 색상만 다르게 한 채널로 모인다.
+
+P1에 `@here` 멘션을 걸려면 합성 시점에 환경변수를 준다(기본값은 비어 있다 — 야간에 사람을 깨울지는 팀이 정할 문제다).
+
+```bash
+DISCORD_ALERT_MENTION="@here" npx cdk deploy StandinApp
+```
+
+설계 정본은 마스터독스의 「관측성 — 로그·모니터링·디스코드 알림」이다.
+
 ## CI/CD
 
 `templates/`의 워크플로를 각 앱 저장소의 `.github/workflows/deploy.yml`로 복사한다.
