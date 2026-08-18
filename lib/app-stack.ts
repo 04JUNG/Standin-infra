@@ -243,6 +243,33 @@ export class AppStack extends Stack {
       },
     });
 
+    /**
+     * 장애 알림용 디스코드 웹훅. 설계: 마스터독스 「관측성 — 로그·모니터링·디스코드 알림」.
+     *
+     * ⚠ 웹훅 URL 자체가 비밀이다 — URL을 아는 누구나 그 채널에 글을 쓸 수 있다.
+     *   그래서 환경변수가 아니라 시크릿으로 주입한다.
+     *
+     * ⚠ 값이 비어도 키는 반드시 만들어 둔다. ECS는 태스크를 띄울 때 시크릿의 JSON 키를
+     *   해석하는데, 없는 키를 참조하면 컨테이너가 시작조차 못 한다(OAuth 시크릿과 같은 이유).
+     *   값이 비면 두 서버의 알림기가 조용히 no-op으로 동작하므로 기동에는 문제가 없다.
+     */
+    const discordSecret = new secretsmanager.Secret(this, "DiscordSecret", {
+      secretName: "standin/discord",
+      description: "Discord webhooks for P1/P2/P3 alerts. Fill values in the console after deploy.",
+      secretObjectValue: {
+        webhookAlert: SecretValue.unsafePlainText(""), // P1 — 사람을 깨운다
+        webhookWarn: SecretValue.unsafePlainText(""), // P2 — 업무시간에 본다
+        webhookOps: SecretValue.unsafePlainText(""), // P3 — 기동·배포·요약 기록
+      },
+    });
+
+    /**
+     * P1 알림에 붙일 멘션. 비밀이 아니므로 환경변수로 둔다.
+     * 켜려면 `DISCORD_ALERT_MENTION="@here" npx cdk deploy StandinApp` 로 재배포한다.
+     * 기본이 비어 있는 이유: 야간에 사람을 깨울지는 팀이 정할 문제지 코드가 정할 문제가 아니다.
+     */
+    const discordAlertMention = process.env.DISCORD_ALERT_MENTION ?? "";
+
     // CloudFront만 ALB를 통과할 수 있게 하는 origin 검증값. 값은 코드나 출력에 남기지 않는다.
     const originVerifySecret = new secretsmanager.Secret(this, "OriginVerifySecret", {
       description: "Shared secret used to verify CloudFront requests at the ALB",
@@ -285,6 +312,7 @@ export class AppStack extends Stack {
         POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
         POSE_LIBRARY_VERSION: "v1",
         DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+        DISCORD_ALERT_MENTION: discordAlertMention,
         // refine 게이트는 코드 기본값에 맡기지 않고 배포에서 명시한다.
         // 추론의 기본값은 REFINE_ENABLED=1이라, 적어 두지 않으면 조정본 영속화가
         // 검증되기도 전에 켜진 채로 뜬다.
@@ -295,6 +323,9 @@ export class AppStack extends Stack {
       secrets: {
         GEMINI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "geminiApiKey"),
         OPENAI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "openaiApiKey"),
+        DISCORD_WEBHOOK_ALERT: ecs.Secret.fromSecretsManager(discordSecret, "webhookAlert"),
+        DISCORD_WEBHOOK_WARN: ecs.Secret.fromSecretsManager(discordSecret, "webhookWarn"),
+        DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
       },
       portMappings: [{ containerPort: 8000 }],
       healthCheck: {
@@ -445,6 +476,7 @@ export class AppStack extends Stack {
         REFINE_TIMEOUT_MS: "5000",
         BETA_CONSENT_VERSION: "2026-08-02",
         DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+        DISCORD_ALERT_MENTION: discordAlertMention,
         // 분석/포즈 기능은 계정 JWT 대신 동의된 installation 인증을 요구한다.
         // users API는 BFF에서 계속 계정 인증을 요구한다.
         ALLOW_ANONYMOUS_ANALYSIS: "false",
@@ -497,6 +529,9 @@ export class AppStack extends Stack {
         SMTP_USER: ecs.Secret.fromSecretsManager(smtpSecret, "user"),
         SMTP_PASS: ecs.Secret.fromSecretsManager(smtpSecret, "pass"),
         SMTP_FROM: ecs.Secret.fromSecretsManager(smtpSecret, "from"),
+        DISCORD_WEBHOOK_ALERT: ecs.Secret.fromSecretsManager(discordSecret, "webhookAlert"),
+        DISCORD_WEBHOOK_WARN: ecs.Secret.fromSecretsManager(discordSecret, "webhookWarn"),
+        DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
       },
       portMappings: [{ containerPort: 8080 }],
     });
@@ -544,12 +579,17 @@ export class AppStack extends Stack {
         DATABASE_SSL: "true",
         PGDATABASE: "standin",
         DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+        DISCORD_ALERT_MENTION: discordAlertMention,
       },
       secrets: {
         PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
         PGPORT: ecs.Secret.fromSecretsManager(database.secret!, "port"),
         PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
         PGPASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
+        // 분석이 실제로 도는 곳이라 실패 알림이 가장 필요하다.
+        DISCORD_WEBHOOK_ALERT: ecs.Secret.fromSecretsManager(discordSecret, "webhookAlert"),
+        DISCORD_WEBHOOK_WARN: ecs.Secret.fromSecretsManager(discordSecret, "webhookWarn"),
+        DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
       },
     });
     betaData.grantRead(workerTask.taskRole);
