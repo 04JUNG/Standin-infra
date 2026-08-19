@@ -390,8 +390,19 @@ export class AppStack extends Stack {
         VLM_PROVIDER: isProd ? "gemini" : "mock",
         // 기본 모델 변경이나 지원 종료에 영향받지 않도록 배포 모델을 명시한다.
         GEMINI_MODEL: "gemini-flash-latest",
-        GEMINI_REQUEST_TIMEOUT_MS: "20000",
+        // ⚠ 2026-08-19 장애: 20000(20초)이 짧아 프로덕션 분석이 전부 이 데드라인에
+        //   잘렸다(관측된 Gemini 호출 3건 전부 실패, 성공 0건, 실패 중 2건이 20.0s·20.3s).
+        //   이 값이 생기기 전에는 상한이 없어 느린 호출도 결국 끝났다 — 즉 이 값이
+        //   "느리지만 되던 것"을 "무조건 실패"로 바꿨다.
+        //   timeout에는 HTTP 상태가 없어 재시도 대상이 아니므로(비용 중복 방지)
+        //   데드라인 자체를 넉넉히 잡는 것으로 푼다.
+        GEMINI_REQUEST_TIMEOUT_MS: "45000",
+        // 429/503만 이 횟수 안에서 재시도한다. timeout은 해당하지 않는다.
         GEMINI_MAX_ATTEMPTS: "3",
+        // VLM 단계 전체(재시도 포함) 예산(초). 이게 없으면 timeout을 45초로 올린 순간
+        // 재시도 3회가 135초가 되어 BFF의 분석 상한(120초)을 넘고, 사용자는 원인을
+        // 알 수 없는 ANALYSIS_TIMEOUT을 받는다.
+        GEMINI_TOTAL_BUDGET_SECONDS: "75",
         GEMINI_RETRY_BASE_SECONDS: "0.5",
         GEMINI_RETRY_MAX_SECONDS: "2.0",
         POSE_BACKEND: isProd ? "rtmlib" : "mock",
