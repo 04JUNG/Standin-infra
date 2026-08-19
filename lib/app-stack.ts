@@ -402,7 +402,6 @@ export class AppStack extends Stack {
         // 2단계에서는 번들을 받아 푼다. 번들이 없으면 기동에 실패한다(의도).
         POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
         POSE_LIBRARY_VERSION: "v1",
-        DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
         DISCORD_ALERT_MENTION: discordAlertMention,
         // refine 게이트는 코드 기본값에 맡기지 않고 배포에서 명시한다.
         // 추론의 기본값은 REFINE_ENABLED=1이라, 적어 두지 않으면 조정본 영속화가
@@ -563,7 +562,6 @@ export class AppStack extends Stack {
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
         REFINE_TIMEOUT_MS: "5000",
         BETA_CONSENT_VERSION: "2026-08-02",
-        DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
         DISCORD_ALERT_MENTION: discordAlertMention,
         // 분석/포즈 기능은 계정 JWT 대신 동의된 installation 인증을 요구한다.
         // users API는 BFF에서 계속 계정 인증을 요구한다.
@@ -663,7 +661,6 @@ export class AppStack extends Stack {
         ANALYSIS_TIMEOUT_MS: "120000",
         DATABASE_SSL: "true",
         PGDATABASE: "standin",
-        DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
         DISCORD_ALERT_MENTION: discordAlertMention,
       },
       secrets: {
