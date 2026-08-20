@@ -21,13 +21,16 @@
       "repo:04JUNG@302009989/Standin-app-server@1302376537",
       "repo:04JUNG/Standin-server"
     ],
-    "//publicUrl": "CloudFront 공개 진입점. OAuth 리디렉트·이메일 인증 링크가 이 값을 쓴다.",
-    "publicUrl": "https://d1bbz5oaj92efa.cloudfront.net",
+    "//publicUrl": "ALB 공개 도메인. OAuth 리디렉트·이메일 인증 링크가 이 값을 쓴다.",
+    "publicUrl": "https://api.standinpose.com",
+    "//certificateArn": "api.standinpose.com용 서울 리전 ACM 인증서",
+    "certificateArn": "arn:aws:acm:ap-northeast-2:136889124221:certificate/a102a4c6-013b-40ca-98fd-8c963acd9ccb",
     "//appEnv": "실제 배포된 값. development로 되돌리면 실서비스가 mock VLM·합성 라이브러리로 뒤집힌다.",
     "appEnv": "production",
     "//refineEnabled": "추론 서버의 refine 실행 스위치. 프로덕션에서 켜져 있다.",
     "refineEnabled": true,
     "//refineFeatureEnabled": "BFF의 사용자 노출 스위치. refineEnabled=true일 때만 true 허용. 프로덕션에서 켜져 있다.",
-    "refineFeatureEnabled": true
+    "refineFeatureEnabled": true,
+    "jobExecutionMode": "inline"
   }
 }

@@ -2,9 +2,11 @@ import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, type StackProps
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import type * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
-import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
-import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import * as events from "aws-cdk-lib/aws-events";
+import * as targets from "aws-cdk-lib/aws-events-targets";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
@@ -12,13 +14,16 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 
 export interface AppStackProps extends StackProps {
   bffRepo: ecr.Repository;
   inferenceRepo: ecr.Repository;
-  /** ALB DNS를 알기 전 첫 배포에서는 비워 둔다. 이후 채워서 재배포. */
+  /** BFF의 공개 HTTPS 기준 URL(OAuth 콜백·이메일 인증 링크). */
   publicUrl: string;
+  /** ALB HTTPS 리스너에 연결할, 같은 리전의 발급 완료된 ACM 인증서 ARN. */
+  certificateArn: string;
   /**
    * 배포 단계 스위치.
    *   development — 합성 라이브러리·mock 백엔드로 인프라 배선만 검증(1단계)
@@ -30,6 +35,15 @@ export interface AppStackProps extends StackProps {
   refineEnabled: boolean;
   /** BFF가 클라이언트에 refine 기능을 노출한다. 추론 flag가 켜진 뒤에만 활성화한다. */
   refineFeatureEnabled: boolean;
+  /** 기본 inline. 앱·queue 검증 뒤 sqs로 전환하면 worker desiredCount도 1이 된다. */
+  jobExecutionMode: "inline" | "sqs";
+  /**
+   * 로그 출하 경로(계획 5단계). 기본 cloudwatch.
+   * firelens로 바꾸면 fluent-bit 사이드카가 외부 수집기로 보내고 CloudWatch에는 남지 않는다.
+   */
+  logShipping: "cloudwatch" | "firelens";
+  /** 컨테이너 로그 보존일. 기본 14일(클로즈베타 데이터 정책과 맞물려 있다). */
+  logRetentionDays: number;
 }
 
 /**
@@ -78,6 +92,10 @@ export class AppStack extends Stack {
       vpc: vpc,
       description: "Standin inference tasks (unauthenticated - never expose publicly)",
     });
+    const workerSg = new ec2.SecurityGroup(this, "WorkerSg", {
+      vpc,
+      description: "Standin analysis queue workers",
+    });
 
     const dbSg = new ec2.SecurityGroup(this, "DbSg", {
       vpc: vpc,
@@ -87,7 +105,9 @@ export class AppStack extends Stack {
 
     // 유일하게 허용하는 내부 경로 두 개.
     inferenceSg.addIngressRule(bffSg, ec2.Port.tcp(8000), "BFF to inference");
+    inferenceSg.addIngressRule(workerSg, ec2.Port.tcp(8000), "Worker to inference");
     dbSg.addIngressRule(bffSg, ec2.Port.tcp(5432), "BFF to PostgreSQL");
+    dbSg.addIngressRule(workerSg, ec2.Port.tcp(5432), "Worker to PostgreSQL");
   
     // ── 데이터베이스 ──────────────────────────────────────────────
     const database = new rds.DatabaseInstance(this, "Postgres", {
@@ -233,11 +253,116 @@ export class AppStack extends Stack {
       },
     });
 
-    // CloudFront만 ALB를 통과할 수 있게 하는 origin 검증값. 값은 코드나 출력에 남기지 않는다.
-    const originVerifySecret = new secretsmanager.Secret(this, "OriginVerifySecret", {
-      description: "Shared secret used to verify CloudFront requests at the ALB",
-      generateSecretString: { passwordLength: 48, excludePunctuation: true },
+    /**
+     * 장애 알림용 디스코드 웹훅. 설계: 마스터독스 「관측성 — 로그·모니터링·디스코드 알림」.
+     *
+     * ⚠ 웹훅 URL 자체가 비밀이다 — URL을 아는 누구나 그 채널에 글을 쓸 수 있다.
+     *   그래서 환경변수가 아니라 시크릿으로 주입한다.
+     *
+     * ⚠ 값이 비어도 키는 반드시 만들어 둔다. ECS는 태스크를 띄울 때 시크릿의 JSON 키를
+     *   해석하는데, 없는 키를 참조하면 컨테이너가 시작조차 못 한다(OAuth 시크릿과 같은 이유).
+     *   값이 비면 두 서버의 알림기가 조용히 no-op으로 동작하므로 기동에는 문제가 없다.
+     */
+    const discordSecret = new secretsmanager.Secret(this, "DiscordSecret", {
+      secretName: "standin/discord",
+      description: "Discord webhooks for P1/P2/P3 alerts. Fill values in the console after deploy.",
+      secretObjectValue: {
+        webhookAlert: SecretValue.unsafePlainText(""), // P1 — 사람을 깨운다
+        webhookWarn: SecretValue.unsafePlainText(""), // P2 — 업무시간에 본다
+        webhookOps: SecretValue.unsafePlainText(""), // P3 — 기동·배포·요약 기록
+      },
     });
+
+    /**
+     * P1 알림에 붙일 멘션. 비밀이 아니므로 환경변수로 둔다.
+     *
+     * 기본값이 `@here`인 이유: 팀이 P1을 "사람을 깨우는 등급"으로 정했다(2026-08-18).
+     * 야간 호출을 끄려면 `DISCORD_ALERT_MENTION="" npx cdk deploy StandinApp`.
+     * P1을 남발하지 않는 것이 이 기본값을 지탱하는 전제다 — 등급을 올릴 때마다
+     * 그 알림이 새벽 3시에 울려도 되는지 먼저 따진다.
+     */
+    const discordAlertMention = process.env.DISCORD_ALERT_MENTION ?? "@here";
+
+    // ── 로그 출하(계획 5단계) ─────────────────────────────────────
+    //
+    // 기본은 CloudWatch다. 계획 문서 §8의 전환 기준은 "3단계 자체 대시보드로 원인을 못 찾아
+    // CloudWatch 콘솔을 여는 일이 월 3회를 넘을 때"다. 그 전에 수집 인프라를 세우면
+    // 유지비만 나간다. 여기서는 그날이 왔을 때 **코드를 새로 쓰지 않고 스위치만 넘기도록**
+    // 배선만 해 둔다.
+    //
+    // ⚠ firelens 경로는 실제 수집기(Grafana Cloud/Loki)에 붙여 검증한 적이 없다.
+    //   처음 켤 때는 반드시 development에서 먼저 확인한다.
+    const ALLOWED_RETENTION_DAYS = [1, 3, 5, 7, 14, 30, 60, 90, 180, 365];
+    if (!ALLOWED_RETENTION_DAYS.includes(props.logRetentionDays)) {
+      // CloudWatch는 아무 숫자나 받지 않는다. 배포 중에 실패하지 말고 합성에서 막는다.
+      throw new Error(
+        `logRetentionDays must be one of ${ALLOWED_RETENTION_DAYS.join(", ")} (got ${props.logRetentionDays})`,
+      );
+    }
+    const logRetention = props.logRetentionDays as logs.RetentionDays;
+
+    // 수집기 접속 정보. firelens를 켤 때만 만든다 — 안 쓰는 시크릿에 매달 요금을 내지 않는다.
+    const logShippingSecret =
+      props.logShipping === "firelens"
+        ? new secretsmanager.Secret(this, "LogShippingSecret", {
+            secretName: "standin/log-shipping",
+            description: "External log collector credentials (Loki/Grafana Cloud)",
+            secretObjectValue: {
+              host: SecretValue.unsafePlainText(""), // 예: logs-prod-013.grafana.net
+              user: SecretValue.unsafePlainText(""), // 테넌트 ID
+              password: SecretValue.unsafePlainText(""), // API 키
+            },
+          })
+        : undefined;
+
+    /**
+     * 컨테이너 로그 드라이버를 만든다. 태스크마다 부른다(사이드카는 태스크 단위라서다).
+     *
+     * firelens 모드에서는 fluent-bit 사이드카가 로그를 받아 외부로 보낸다. 사이드카 자신의
+     * 로그는 CloudWatch에 짧게 남긴다 — 출하가 깨졌을 때 그 사실을 알 수 있는 유일한 경로다.
+     */
+    const containerLogging = (
+      taskDefinition: ecs.FargateTaskDefinition,
+      streamPrefix: string,
+    ): ecs.LogDriver => {
+      if (props.logShipping === "cloudwatch" || !logShippingSecret) {
+        return ecs.LogDrivers.awsLogs({ streamPrefix, logRetention });
+      }
+
+      taskDefinition.addFirelensLogRouter("log-router", {
+        image: ecs.ContainerImage.fromRegistry(
+          "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable",
+        ),
+        firelensConfig: { type: ecs.FirelensLogRouterType.FLUENTBIT },
+        logging: ecs.LogDrivers.awsLogs({
+          streamPrefix: "log-router",
+          logRetention: logs.RetentionDays.THREE_DAYS,
+        }),
+        memoryReservationMiB: 50,
+        // fluent-bit의 forward 입력 포트. 태스크 안에서만 쓰이지만 선언하지 않으면
+        // CDK가 "포트 없는 컨테이너"로 보고 합성을 막는다.
+        portMappings: [{ containerPort: 24224 }],
+      });
+
+      return ecs.LogDrivers.firelens({
+        options: {
+          Name: "loki",
+          // 값은 배포 후 콘솔에서 시크릿에 채운다. 호스트는 비밀이 아니지만 계정마다
+          // 다르므로 같은 시크릿에 모아 둔다(두 곳에 두면 반드시 어긋난다).
+          port: "443",
+          tls: "on",
+          // 라벨은 여기서 고정한다. 로그 본문의 필드를 라벨로 올리면 카디널리티가 터진다
+          // (requestId를 라벨로 만들면 인덱스가 요청 수만큼 늘어난다).
+          labels: `job=standin,service=${streamPrefix}`,
+          line_format: "json",
+        },
+        secretOptions: {
+          host: ecs.Secret.fromSecretsManager(logShippingSecret, "host"),
+          http_user: ecs.Secret.fromSecretsManager(logShippingSecret, "user"),
+          http_passwd: ecs.Secret.fromSecretsManager(logShippingSecret, "password"),
+        },
+      });
+    };
 
     // ── 추론 서비스(내부 전용) ────────────────────────────────────
     const inferenceTask = new ecs.FargateTaskDefinition(this, "InferenceTask", {
@@ -251,10 +376,7 @@ export class AppStack extends Stack {
 
     inferenceTask.addContainer("inference", {
       image: ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, "latest"),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "inference",
-        logRetention: logs.RetentionDays.TWO_WEEKS,
-      }),
+      logging: containerLogging(inferenceTask, "inference"),
       environment: {
         APP_ENV: props.appEnv,
         // 1단계는 mock으로 인프라 배선만 확인하고, 2단계에서 실모델로 넘어간다.
@@ -262,6 +384,21 @@ export class AppStack extends Stack {
         VLM_PROVIDER: isProd ? "gemini" : "mock",
         // 기본 모델 변경이나 지원 종료에 영향받지 않도록 배포 모델을 명시한다.
         GEMINI_MODEL: "gemini-flash-latest",
+        // ⚠ 2026-08-19 장애: 20000(20초)이 짧아 프로덕션 분석이 전부 이 데드라인에
+        //   잘렸다(관측된 Gemini 호출 3건 전부 실패, 성공 0건, 실패 중 2건이 20.0s·20.3s).
+        //   이 값이 생기기 전에는 상한이 없어 느린 호출도 결국 끝났다 — 즉 이 값이
+        //   "느리지만 되던 것"을 "무조건 실패"로 바꿨다.
+        //   timeout에는 HTTP 상태가 없어 재시도 대상이 아니므로(비용 중복 방지)
+        //   데드라인 자체를 넉넉히 잡는 것으로 푼다.
+        GEMINI_REQUEST_TIMEOUT_MS: "45000",
+        // 429/503만 이 횟수 안에서 재시도한다. timeout은 해당하지 않는다.
+        GEMINI_MAX_ATTEMPTS: "3",
+        // VLM 단계 전체(재시도 포함) 예산(초). 이게 없으면 timeout을 45초로 올린 순간
+        // 재시도 3회가 135초가 되어 BFF의 분석 상한(120초)을 넘고, 사용자는 원인을
+        // 알 수 없는 ANALYSIS_TIMEOUT을 받는다.
+        GEMINI_TOTAL_BUDGET_SECONDS: "75",
+        GEMINI_RETRY_BASE_SECONDS: "0.5",
+        GEMINI_RETRY_MAX_SECONDS: "2.0",
         POSE_BACKEND: isProd ? "rtmlib" : "mock",
         DATA_DIR: "/app/data",
         DB_PATH: "/app/data/poses.db",
@@ -270,7 +407,7 @@ export class AppStack extends Stack {
         // 2단계에서는 번들을 받아 푼다. 번들이 없으면 기동에 실패한다(의도).
         POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
         POSE_LIBRARY_VERSION: "v1",
-        DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+        DISCORD_ALERT_MENTION: discordAlertMention,
         // refine 게이트는 코드 기본값에 맡기지 않고 배포에서 명시한다.
         // 추론의 기본값은 REFINE_ENABLED=1이라, 적어 두지 않으면 조정본 영속화가
         // 검증되기도 전에 켜진 채로 뜬다.
@@ -281,6 +418,9 @@ export class AppStack extends Stack {
       secrets: {
         GEMINI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "geminiApiKey"),
         OPENAI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "openaiApiKey"),
+        DISCORD_WEBHOOK_ALERT: ecs.Secret.fromSecretsManager(discordSecret, "webhookAlert"),
+        DISCORD_WEBHOOK_WARN: ecs.Secret.fromSecretsManager(discordSecret, "webhookWarn"),
+        DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
       },
       portMappings: [{ containerPort: 8000 }],
       healthCheck: {
@@ -374,6 +514,19 @@ export class AppStack extends Stack {
       ],
     });
 
+    // ── 분석 Job queue ────────────────────────────────────────────
+    const analysisDlq = new sqs.Queue(this, "AnalysisDlq", {
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      retentionPeriod: Duration.days(14),
+    });
+    const analysisQueue = new sqs.Queue(this, "AnalysisQueue", {
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      visibilityTimeout: Duration.seconds(180),
+      retentionPeriod: Duration.days(4),
+      receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: { queue: analysisDlq, maxReceiveCount: 3 },
+    });
+
     // ── BFF 서비스(공개 엣지) ─────────────────────────────────────
     const bffTask = new ecs.FargateTaskDefinition(this, "BffTask", {
       cpu: 512,
@@ -388,10 +541,7 @@ export class AppStack extends Stack {
 
     bffTask.addContainer("bff", {
       image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, "latest"),
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "bff",
-        logRetention: logs.RetentionDays.TWO_WEEKS,
-      }),
+      logging: containerLogging(bffTask, "bff"),
       environment: {
         PORT: "8080",
         NODE_ENV: "production",
@@ -403,6 +553,10 @@ export class AppStack extends Stack {
         OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
         INFERENCE_BASE_URL: "http://inference.standin.local:8000",
         BETA_DATA_BUCKET: betaData.bucketName,
+        JOB_EXECUTION_MODE: props.jobExecutionMode,
+        ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
+        WORKER_VISIBILITY_SECONDS: "180",
+        WORKER_LEASE_SECONDS: "180",
         /**
          * refine 노출 스위치. 추론의 REFINE_ENABLED와 **별도**다(OPS-02).
          *
@@ -413,7 +567,7 @@ export class AppStack extends Stack {
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
         REFINE_TIMEOUT_MS: "5000",
         BETA_CONSENT_VERSION: "2026-08-02",
-        DEPLOYMENT_VERSION: process.env.DEPLOYMENT_VERSION ?? "unknown",
+        DISCORD_ALERT_MENTION: discordAlertMention,
         // 분석/포즈 기능은 계정 JWT 대신 동의된 installation 인증을 요구한다.
         // users API는 BFF에서 계속 계정 인증을 요구한다.
         ALLOW_ANONYMOUS_ANALYSIS: "false",
@@ -427,13 +581,10 @@ export class AppStack extends Stack {
         // env가 없으면 쿼터를 낮추려고 앱 코드를 고쳐 재배포해야 한다.
         // 0 이하는 앱에서 "제한 없음"으로 읽는다.
         //
-        // ⚠ XFF 오른쪽에서 신뢰하는 프록시 홉 수. 이 스택의 체인이
-        //   CloudFront → ALB라서 1이다: CloudFront가 뷰어 IP를 덧붙이고 ALB가
-        //   엣지 IP를 덧붙이므로 오른쪽에서 2번째가 실제 client IP다.
-        //   CloudFront는 클라가 보낸 XFF도 그대로 전달하므로(ALL_VIEWER_EXCEPT_HOST_HEADER)
-        //   왼쪽은 위조 가능하다 — 홉 수를 실제 프록시 수보다 크게 잡으면 IP 제한이 우회된다.
-        //   체인이 바뀌면(WAF 삽입, ALB 직접 노출 등) 이 값도 같이 바꿔야 한다.
-        TRUSTED_PROXY_HOPS: "1",
+        // ALB는 자신을 XFF에 넣지 않고 client IP를 오른쪽 끝에 append한다. 따라서
+        // 오른쪽에서 건너뛸 주소는 0개다. 클라가 앞쪽 XFF를 위조해도 오른쪽 끝은
+        // ALB가 관측한 주소라 바뀌지 않는다. 프록시 없는 로컬은 -1로 XFF를 끈다.
+        TRUSTED_PROXY_HOPS: "0",
         QUOTA_INSTALLATION_DAILY: "10",
         QUOTA_INSTALLATION_CONCURRENT: "1",
         // 전체 일일 상한. 오픈베타_계획_2026-08-13 §4-2의 산식에서 나온 값이다:
@@ -466,9 +617,13 @@ export class AppStack extends Stack {
         SMTP_USER: ecs.Secret.fromSecretsManager(smtpSecret, "user"),
         SMTP_PASS: ecs.Secret.fromSecretsManager(smtpSecret, "pass"),
         SMTP_FROM: ecs.Secret.fromSecretsManager(smtpSecret, "from"),
+        DISCORD_WEBHOOK_ALERT: ecs.Secret.fromSecretsManager(discordSecret, "webhookAlert"),
+        DISCORD_WEBHOOK_WARN: ecs.Secret.fromSecretsManager(discordSecret, "webhookWarn"),
+        DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
       },
       portMappings: [{ containerPort: 8080 }],
     });
+    analysisQueue.grantSendMessages(bffTask.taskRole);
 
     const bffService = new ecs.FargateService(this, "BffService", {
       cluster,
@@ -484,30 +639,86 @@ export class AppStack extends Stack {
       healthCheckGracePeriod: Duration.seconds(60),
     });
 
+    // HTTP 수신과 분리된 영속 Job worker. inline 단계에서는 서비스만 만들고 0개로 둔다.
+    const workerTask = new ecs.FargateTaskDefinition(this, "AnalysisWorkerTask", {
+      cpu: 512,
+      memoryLimitMiB: 1024,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+    workerTask.addContainer("analysis-worker", {
+      image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, "latest"),
+      command: ["node", "dist/worker.js"],
+      stopTimeout: Duration.seconds(120),
+      logging: containerLogging(workerTask, "analysis-worker"),
+      environment: {
+        NODE_ENV: "production",
+        INFERENCE_BASE_URL: "http://inference.standin.local:8000",
+        BETA_DATA_BUCKET: betaData.bucketName,
+        ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
+        WORKER_VISIBILITY_SECONDS: "180",
+        WORKER_LEASE_SECONDS: "180",
+        ANALYSIS_TIMEOUT_MS: "120000",
+        DATABASE_SSL: "true",
+        PGDATABASE: "standin",
+        DISCORD_ALERT_MENTION: discordAlertMention,
+      },
+      secrets: {
+        PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
+        PGPORT: ecs.Secret.fromSecretsManager(database.secret!, "port"),
+        PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
+        PGPASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
+        // 분석이 실제로 도는 곳이라 실패 알림이 가장 필요하다.
+        DISCORD_WEBHOOK_ALERT: ecs.Secret.fromSecretsManager(discordSecret, "webhookAlert"),
+        DISCORD_WEBHOOK_WARN: ecs.Secret.fromSecretsManager(discordSecret, "webhookWarn"),
+        DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
+      },
+    });
+    betaData.grantRead(workerTask.taskRole);
+    analysisQueue.grantConsumeMessages(workerTask.taskRole);
+
+    const workerService = new ecs.FargateService(this, "AnalysisWorkerService", {
+      cluster,
+      taskDefinition: workerTask,
+      desiredCount: props.jobExecutionMode === "sqs" ? 1 : 0,
+      securityGroups: [workerSg],
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      assignPublicIp: true,
+      circuitBreaker: { rollback: true },
+      minHealthyPercent: 100,
+      maxHealthyPercent: 200,
+    });
+
+    new cloudwatch.Alarm(this, "AnalysisQueueAgeAlarm", {
+      metric: analysisQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1) }),
+      threshold: 120,
+      evaluationPeriods: 2,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+    });
+    new cloudwatch.Alarm(this, "AnalysisDlqAlarm", {
+      metric: analysisDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1) }),
+      threshold: 0,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+    });
+
     const alb = new elbv2.ApplicationLoadBalancer(this, "Alb", {
       vpc: vpc,
       internetFacing: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
     });
 
-    const listener = alb.addListener("Http", {
-      port: 80,
+    const httpsListener = alb.addListener("Https", {
+      port: 443,
       open: true,
-      // ALB DNS로 직접 들어온 요청은 거부한다. 정상 요청은 아래 CloudFront 전용 규칙만 통과한다.
-      defaultAction: elbv2.ListenerAction.fixedResponse(403, {
-        contentType: "text/plain",
-        messageBody: "Access denied",
-      }),
+      protocol: elbv2.ApplicationProtocol.HTTPS,
+      certificates: [elbv2.ListenerCertificate.fromArn(props.certificateArn)],
+      sslPolicy: elbv2.SslPolicy.RECOMMENDED_TLS,
     });
 
-    listener.addTargets("BffTarget", {
-      priority: 1,
-      conditions: [
-        elbv2.ListenerCondition.httpHeader(
-          "X-Standin-Origin-Verify",
-          [originVerifySecret.secretValue.unsafeUnwrap()],
-        ),
-      ],
+    httpsListener.addTargets("BffTarget", {
       port: 8080,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targets: [bffService],
@@ -521,37 +732,90 @@ export class AppStack extends Stack {
       deregistrationDelay: Duration.seconds(30),
     });
 
-    // 도메인이 없어도 CloudFront 기본 인증서(*.cloudfront.net)로 공인 HTTPS를 제공한다.
-    // API이므로 캐시하지 않고, Host를 제외한 헤더·쿠키·쿼리스트링을 origin에 전달한다.
-    const distribution = new cloudfront.Distribution(this, "Distribution", {
-      comment: "Standin public HTTPS entry point",
-      defaultBehavior: {
-        origin: new origins.HttpOrigin(alb.loadBalancerDnsName, {
-          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-          customHeaders: {
-            "X-Standin-Origin-Verify": originVerifySecret.secretValue.unsafeUnwrap(),
-          },
-        }),
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-        compress: true,
+    alb.addListener("Http", {
+      port: 80,
+      open: true,
+      defaultAction: elbv2.ListenerAction.redirect({
+        protocol: "HTTPS",
+        port: "443",
+        permanent: true,
+      }),
+    });
+
+    // ── 인프라 이벤트 알림(계획 4단계) ────────────────────────────
+    //
+    // 앱 안의 알림기가 **원리적으로 보고할 수 없는** 사건들을 여기서 잡는다.
+    //   · 태스크가 아예 뜨지 못함 — 알림기가 실행되지도 않는다.
+    //   · OOM/강제 종료 — 죽는 순간 알림 버퍼도 함께 사라진다.
+    //   · 배포 서킷브레이커 롤백 — 옛 태스크가 계속 돌아 서비스는 "정상"으로 보인다.
+    //
+    // CloudWatch 알람이 아니라 EventBridge 이벤트 버스를 쓴다. 임계값을 정할 필요가 없고
+    // 사건이 일어난 그 순간 한 건이 오며, 비용도 사실상 0이다.
+    const infraAlerts = new lambda.Function(this, "InfraAlerts", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset("lambda/infra-alerts"),
+      // 웹훅 한 번 호출이 전부다. 길게 잡아 둘 이유가 없다.
+      timeout: Duration.seconds(10),
+      memorySize: 128,
+      logRetention: logs.RetentionDays.ONE_WEEK,
+      environment: {
+        DISCORD_SECRET_ARN: discordSecret.secretArn,
+        DISCORD_ALERT_MENTION: discordAlertMention,
       },
-      enabled: true,
-      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
-      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
-      priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+      description: "ECS·RDS 이벤트를 디스코드로 알린다(앱이 보고할 수 없는 사건)",
+    });
+    // 값을 환경변수로 굽지 않는다 — 실행 시점에 읽어야 웹훅을 교체해도 재배포가 필요 없다.
+    discordSecret.grantRead(infraAlerts);
+
+    // 태스크 종료. 정상 종료(배포·스케일 인)까지 오는 것은 Lambda가 걸러 낸다 —
+    // 이벤트 패턴만으로는 exitCode·stopCode 조합을 판단할 수 없다.
+    new events.Rule(this, "TaskStoppedRule", {
+      description: "Standin 태스크가 멈추면 알린다",
+      eventPattern: {
+        source: ["aws.ecs"],
+        detailType: ["ECS Task State Change"],
+        detail: {
+          clusterArn: [cluster.clusterArn],
+          lastStatus: ["STOPPED"],
+        },
+      },
+      targets: [new targets.LambdaFunction(infraAlerts)],
+    });
+
+    // 배포 결과. 롤백은 "새 코드가 반영되지 않았다"는 뜻이라 가장 값어치 있는 알림이다.
+    new events.Rule(this, "DeploymentStateRule", {
+      description: "Standin 서비스 배포 실패·완료를 알린다",
+      eventPattern: {
+        source: ["aws.ecs"],
+        detailType: ["ECS Deployment State Change"],
+        resources: [
+          bffService.serviceArn,
+          inferenceService.serviceArn,
+          workerService.serviceArn,
+        ],
+      },
+      targets: [new targets.LambdaFunction(infraAlerts)],
+    });
+
+    // RDS. 저장공간·장애조치는 앱이 느려지거나 죽기 **전에** 오는 유일한 신호다.
+    new events.Rule(this, "DatabaseEventRule", {
+      description: "Standin RDS 인스턴스 이벤트를 알린다",
+      eventPattern: {
+        source: ["aws.rds"],
+        detailType: ["RDS DB Instance Event"],
+        resources: [database.instanceArn],
+      },
+      targets: [new targets.LambdaFunction(infraAlerts)],
     });
 
     // ── 출력 ─────────────────────────────────────────────────────
     new CfnOutput(this, "AlbUrl", {
-      value: `http://${alb.loadBalancerDnsName}`,
-      description: "CloudFront origin 전용 주소(직접 요청은 403)",
+      value: `https://${alb.loadBalancerDnsName}`,
+      description: "가비아 DNS CNAME 대상인 ALB 주소(인증서 이름 불일치로 직접 호출하지 않음)",
     });
-    new CfnOutput(this, "CloudFrontUrl", {
-      value: `https://${distribution.distributionDomainName}`,
+    new CfnOutput(this, "PublicUrl", {
+      value: props.publicUrl,
       description: "클라 API · OAuth 리디렉트 · 이메일 인증 링크의 공개 HTTPS 기준 URL",
     });
     new CfnOutput(this, "AssetsBucketName", {
@@ -559,6 +823,9 @@ export class AppStack extends Stack {
       description: "포즈 라이브러리 번들을 올릴 버킷",
     });
     new CfnOutput(this, "BffServiceName", { value: bffService.serviceName });
+    new CfnOutput(this, "AnalysisWorkerServiceName", { value: workerService.serviceName });
+    new CfnOutput(this, "AnalysisQueueUrl", { value: analysisQueue.queueUrl });
+    new CfnOutput(this, "AnalysisDlqUrl", { value: analysisDlq.queueUrl });
     new CfnOutput(this, "BetaDataBucketName", {
       value: betaData.bucketName,
       description: "Private 90-day bucket for consented closed-beta input images",
