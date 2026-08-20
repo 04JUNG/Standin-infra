@@ -9,8 +9,8 @@ compatibility_date = "2026-08-18"
 crons = ["* * * * *"]
 
 [vars]
-# 배포 후 StandinApp의 CloudFrontUrl 출력값으로 바꾼다.
-HEALTH_URL = "https://REPLACE-ME.cloudfront.net/healthz"
+# StandinApp의 공개 API health endpoint.
+HEALTH_URL = "https://api.standinpose.com/healthz"
 # P1 멘션. 인프라 스택의 DISCORD_ALERT_MENTION과 같은 값을 쓴다.
 DISCORD_ALERT_MENTION = "@here"
 

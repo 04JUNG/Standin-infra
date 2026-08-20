@@ -6,7 +6,7 @@ BFF 안의 알림기는 자기 죽음을 보고하지 못한다. 태스크가 �
 
 ## 무엇을 하나
 
-1분마다 CloudFront의 `/healthz`를 직접 두드린다.
+1분마다 공개 API의 `/healthz`를 직접 두드린다.
 
 | 상황 | 행동 |
 | --- | --- |
@@ -26,7 +26,8 @@ cd watchdog/cloudflare
 npx wrangler kv namespace create WATCHDOG
 ```
 
-출력된 `id`를 `wrangler.toml`의 `kv_namespaces`에 넣고, `HEALTH_URL`을 `StandinApp` 출력의 `CloudFrontUrl` + `/healthz`로 바꾼다.
+출력된 `id`를 `wrangler.toml`의 `kv_namespaces`에 넣는다. `HEALTH_URL`은
+`https://api.standinpose.com/healthz`로 설정돼 있다.
 
 ```bash
 npx wrangler secret put DISCORD_WEBHOOK_ALERT
