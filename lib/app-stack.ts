@@ -2,9 +2,7 @@ import { CfnOutput, Duration, RemovalPolicy, SecretValue, Stack, type StackProps
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import type * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
-import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
-import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
@@ -22,8 +20,10 @@ import type { Construct } from "constructs";
 export interface AppStackProps extends StackProps {
   bffRepo: ecr.Repository;
   inferenceRepo: ecr.Repository;
-  /** ALB DNS를 알기 전 첫 배포에서는 비워 둔다. 이후 채워서 재배포. */
+  /** BFF의 공개 HTTPS 기준 URL(OAuth 콜백·이메일 인증 링크). */
   publicUrl: string;
+  /** ALB HTTPS 리스너에 연결할, 같은 리전의 발급 완료된 ACM 인증서 ARN. */
+  certificateArn: string;
   /**
    * 배포 단계 스위치.
    *   development — 합성 라이브러리·mock 백엔드로 인프라 배선만 검증(1단계)
@@ -282,12 +282,6 @@ export class AppStack extends Stack {
      * 그 알림이 새벽 3시에 울려도 되는지 먼저 따진다.
      */
     const discordAlertMention = process.env.DISCORD_ALERT_MENTION ?? "@here";
-
-    // CloudFront만 ALB를 통과할 수 있게 하는 origin 검증값. 값은 코드나 출력에 남기지 않는다.
-    const originVerifySecret = new secretsmanager.Secret(this, "OriginVerifySecret", {
-      description: "Shared secret used to verify CloudFront requests at the ALB",
-      generateSecretString: { passwordLength: 48, excludePunctuation: true },
-    });
 
     // ── 로그 출하(계획 5단계) ─────────────────────────────────────
     //
@@ -587,13 +581,10 @@ export class AppStack extends Stack {
         // env가 없으면 쿼터를 낮추려고 앱 코드를 고쳐 재배포해야 한다.
         // 0 이하는 앱에서 "제한 없음"으로 읽는다.
         //
-        // ⚠ XFF 오른쪽에서 신뢰하는 프록시 홉 수. 이 스택의 체인이
-        //   CloudFront → ALB라서 1이다: CloudFront가 뷰어 IP를 덧붙이고 ALB가
-        //   엣지 IP를 덧붙이므로 오른쪽에서 2번째가 실제 client IP다.
-        //   CloudFront는 클라가 보낸 XFF도 그대로 전달하므로(ALL_VIEWER_EXCEPT_HOST_HEADER)
-        //   왼쪽은 위조 가능하다 — 홉 수를 실제 프록시 수보다 크게 잡으면 IP 제한이 우회된다.
-        //   체인이 바뀌면(WAF 삽입, ALB 직접 노출 등) 이 값도 같이 바꿔야 한다.
-        TRUSTED_PROXY_HOPS: "1",
+        // ALB는 자신을 XFF에 넣지 않고 client IP를 오른쪽 끝에 append한다. 따라서
+        // 오른쪽에서 건너뛸 주소는 0개다. 클라가 앞쪽 XFF를 위조해도 오른쪽 끝은
+        // ALB가 관측한 주소라 바뀌지 않는다. 프록시 없는 로컬은 -1로 XFF를 끈다.
+        TRUSTED_PROXY_HOPS: "0",
         QUOTA_INSTALLATION_DAILY: "10",
         QUOTA_INSTALLATION_CONCURRENT: "1",
         // 전체 일일 상한. 오픈베타_계획_2026-08-13 §4-2의 산식에서 나온 값이다:
@@ -719,24 +710,15 @@ export class AppStack extends Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
     });
 
-    const listener = alb.addListener("Http", {
-      port: 80,
+    const httpsListener = alb.addListener("Https", {
+      port: 443,
       open: true,
-      // ALB DNS로 직접 들어온 요청은 거부한다. 정상 요청은 아래 CloudFront 전용 규칙만 통과한다.
-      defaultAction: elbv2.ListenerAction.fixedResponse(403, {
-        contentType: "text/plain",
-        messageBody: "Access denied",
-      }),
+      protocol: elbv2.ApplicationProtocol.HTTPS,
+      certificates: [elbv2.ListenerCertificate.fromArn(props.certificateArn)],
+      sslPolicy: elbv2.SslPolicy.RECOMMENDED_TLS,
     });
 
-    listener.addTargets("BffTarget", {
-      priority: 1,
-      conditions: [
-        elbv2.ListenerCondition.httpHeader(
-          "X-Standin-Origin-Verify",
-          [originVerifySecret.secretValue.unsafeUnwrap()],
-        ),
-      ],
+    httpsListener.addTargets("BffTarget", {
       port: 8080,
       protocol: elbv2.ApplicationProtocol.HTTP,
       targets: [bffService],
@@ -750,28 +732,14 @@ export class AppStack extends Stack {
       deregistrationDelay: Duration.seconds(30),
     });
 
-    // 도메인이 없어도 CloudFront 기본 인증서(*.cloudfront.net)로 공인 HTTPS를 제공한다.
-    // API이므로 캐시하지 않고, Host를 제외한 헤더·쿠키·쿼리스트링을 origin에 전달한다.
-    const distribution = new cloudfront.Distribution(this, "Distribution", {
-      comment: "Standin public HTTPS entry point",
-      defaultBehavior: {
-        origin: new origins.HttpOrigin(alb.loadBalancerDnsName, {
-          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-          customHeaders: {
-            "X-Standin-Origin-Verify": originVerifySecret.secretValue.unsafeUnwrap(),
-          },
-        }),
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-        compress: true,
-      },
-      enabled: true,
-      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
-      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
-      priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+    alb.addListener("Http", {
+      port: 80,
+      open: true,
+      defaultAction: elbv2.ListenerAction.redirect({
+        protocol: "HTTPS",
+        port: "443",
+        permanent: true,
+      }),
     });
 
     // ── 인프라 이벤트 알림(계획 4단계) ────────────────────────────
@@ -843,11 +811,11 @@ export class AppStack extends Stack {
 
     // ── 출력 ─────────────────────────────────────────────────────
     new CfnOutput(this, "AlbUrl", {
-      value: `http://${alb.loadBalancerDnsName}`,
-      description: "CloudFront origin 전용 주소(직접 요청은 403)",
+      value: `https://${alb.loadBalancerDnsName}`,
+      description: "가비아 DNS CNAME 대상인 ALB 주소(인증서 이름 불일치로 직접 호출하지 않음)",
     });
-    new CfnOutput(this, "CloudFrontUrl", {
-      value: `https://${distribution.distributionDomainName}`,
+    new CfnOutput(this, "PublicUrl", {
+      value: props.publicUrl,
       description: "클라 API · OAuth 리디렉트 · 이메일 인증 링크의 공개 HTTPS 기준 URL",
     });
     new CfnOutput(this, "AssetsBucketName", {

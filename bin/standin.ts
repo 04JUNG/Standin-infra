@@ -19,6 +19,13 @@ const githubOidcSubjectPrefixes = app.node.tryGetContext(
   "githubOidcSubjectPrefixes",
 ) as string[];
 const publicUrl = (app.node.tryGetContext("publicUrl") as string) ?? "";
+const certificateArn = (app.node.tryGetContext("certificateArn") as string) ?? "";
+if (!publicUrl.startsWith("https://")) {
+  throw new Error("publicUrl must be an https:// URL");
+}
+if (!certificateArn.startsWith("arn:aws:acm:")) {
+  throw new Error("certificateArn must be an ACM certificate ARN");
+}
 
 function booleanContext(name: string, defaultValue = false): boolean {
   const value = app.node.tryGetContext(name) as unknown;
@@ -84,6 +91,7 @@ new AppStack(app, "StandinApp", {
   bffRepo: registry.bffRepo,
   inferenceRepo: registry.inferenceRepo,
   publicUrl,
+  certificateArn,
   appEnv,
   refineEnabled,
   refineFeatureEnabled,
