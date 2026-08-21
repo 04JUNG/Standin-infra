@@ -18,7 +18,7 @@ python scripts/deploy_pose_library.py data/
 ```bash
 aws cloudformation describe-stacks \
   --stack-name StandinApp \
-  --query "Stacks[0].Outputs[?OutputKey=='AssetsBucketName' || OutputKey=='ClusterName' || OutputKey=='InferenceServiceName' || OutputKey=='InferenceOperatorPolicyArn'].[OutputKey,OutputValue]" \
+  --query "Stacks[0].Outputs[?OutputKey=='AssetsBucketName' || OutputKey=='ClusterName' || OutputKey=='InferenceServiceName' || OutputKey=='InferenceLogGroupName' || OutputKey=='InferenceOperatorPolicyArn'].[OutputKey,OutputValue]" \
   --output table
 ```
 
@@ -28,6 +28,7 @@ IAM Identity Center에서 추론 팀 그룹용 권한 세트를 만들고, 출�
 
 - SSO 시작 URL과 SSO 리전
 - AWS 계정과 권한 세트 이름
+- `InferenceLogGroupName` (로그를 볼 때만 필요합니다. 4장 참고)
 
 버킷·클러스터·서비스 이름은 스크립트에 기본값으로 들어 있어 담당자가 외울 필요가 없습니다.
 스택을 다시 만들어 이름이 바뀌었다면 위 명령의 출력값을 담당자에게 알려주고, 담당자는
@@ -151,12 +152,47 @@ python scripts/deploy_pose_library.py --rollback
 
 되돌릴 대상(날짜·크기·VersionId)을 보여주고 확인을 받은 뒤, 복원과 재기동까지 합니다.
 
+## 4. 로그 보기
+
+배포는 로그를 보지 않아도 끝납니다(2장). 로그가 필요한 때는 **안정화에 실패했을 때**뿐입니다
+— 실패는 "새 번들이 로드되지 않았다"는 사실만 알려 주고, 이유는 컨테이너 로그에만 있습니다.
+
+관리자에게 받은 `InferenceLogGroupName`을 넣고 실행합니다.
+
+```bash
+aws logs tail <InferenceLogGroupName> --since 30m --profile standin-inference
+```
+
+배포하면서 실시간으로 보려면 `--follow`를 붙입니다. 다른 창에서 배포 스크립트를 돌립니다.
+
+```bash
+aws logs tail <InferenceLogGroupName> --since 5m --follow --profile standin-inference
+```
+
+기동 실패 원인은 대개 마지막 수십 줄에 그대로 찍힙니다.
+
+| 로그에 보이는 것 | 뜻 |
+|---|---|
+| `feature_version mismatch` | DB 규격이 서버와 다릅니다. `build_db.py`로 재빌드합니다 |
+| `ValueError: unknown view ...` | `view` 값에 오타가 있습니다 |
+| `pose library ... not found` / S3 오류 | 번들이 올라가지 않았거나 경로가 다릅니다 |
+| `/healthz 503` 반복 | 포즈 0개로 기동했습니다. 번들 내용이 비어 있습니다 |
+
+원인을 알 수 없으면 **되돌린 뒤**(3장) 로그 마지막 부분을 그대로 복사해 관리자에게 보냅니다.
+
+### 볼 수 있는 범위
+
+권한은 **추론 컨테이너 로그 그룹 하나**에만 열려 있습니다. BFF·데이터베이스 로그에는
+사용자 데이터가 흐르므로 열지 않습니다. 웹 콘솔에서 보고 싶으면 CloudWatch → 로그 그룹에서
+위 이름을 찾습니다. 다른 그룹은 이름만 보이고 열리지 않습니다.
+
 ## 참고
 
 ### 안정화에 실패했다면
 
 이전 태스크가 계속 서비스 중이라 장애는 아니지만 새 번들은 적용되지 않은 상태입니다.
-`--rollback`으로 직전 번들로 되돌린 뒤 관리자에게 알립니다.
+`--rollback`으로 직전 번들로 되돌린 뒤 관리자에게 알립니다. 이유는 추론 컨테이너 로그에
+남아 있습니다(4장).
 
 ### 이름이 바뀐 경우
 
