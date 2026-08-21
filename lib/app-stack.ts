@@ -528,6 +528,29 @@ export class AppStack extends Stack {
     });
 
     // ── BFF 서비스(공개 엣지) ─────────────────────────────────────
+    // 사용량 쿼터 env. **BFF와 워커가 같은 값을 봐야 한다** — 소비는 BFF(Job 생성),
+    // 환불은 워커(분석 실패)에서 일어나므로 값이 갈리면 소비한 창과 다른 창을 되돌린다.
+    //
+    // 값이 코드 기본값과 같아도 여기 적어 두는 이유는 **운영 중 조정**이다 —
+    // env가 없으면 쿼터를 바꾸려고 앱을 고쳐 재배포해야 한다. 0 이하는 "제한 없음"이다.
+    const quotaEnv: Record<string, string> = {
+      // 설치별 한도는 **주 단위**다. 하루 10회는 "작업하는 날에 몰아 쓴다"는 실제 사용
+      // 방식을 막았다 — 같은 총량이라도 창이 넓으면 그 리듬을 막지 않는다.
+      // KST 월요일 자정에 리셋된다(앱 `weeklyWindow`).
+      QUOTA_INSTALLATION_WEEKLY: "100",
+      // 쿼터를 적용하지 않을 설치 ID(콤마 구분). 개발자 단말을 여기 넣는다 — 자기 한도에
+      // 막힌 개발자는 정작 한도를 확인해야 할 때 확인하지 못한다. 설치 ID는 앱 설정
+      // 화면에 표시된다. 비워 두면 아무도 예외가 아니다.
+      // ⚠ 면제되는 것은 주간 한도·전체 상한·동시 분석뿐이다. IP burst는 인증 이전
+      //   단계라 그대로 적용된다(RATE_IP_ANALYZE).
+      QUOTA_EXEMPT_INSTALLATIONS: "",
+      // 전체 일일 상한. 오픈베타_계획_2026-08-13 §4-2의 산식에서 나온 값이다:
+      // (월 10만원 − AWS 고정비 5만) ÷ 건당 4원 ≈ 12,500회/월 ≈ 일 416회 → 400.
+      // ⚠ 입력값 둘(AWS 고정비 실측·Gemini 건당 단가)이 아직 측정 전이라 잠정치다.
+      //   단가가 4원을 크게 넘으면 이 값이 아니라 QUOTA_INSTALLATION_WEEKLY를 먼저 낮춘다.
+      QUOTA_GLOBAL_DAILY: "400",
+    };
+
     const bffTask = new ecs.FargateTaskDefinition(this, "BffTask", {
       cpu: 512,
       memoryLimitMiB: 1024,
@@ -585,13 +608,8 @@ export class AppStack extends Stack {
         // 오른쪽에서 건너뛸 주소는 0개다. 클라가 앞쪽 XFF를 위조해도 오른쪽 끝은
         // ALB가 관측한 주소라 바뀌지 않는다. 프록시 없는 로컬은 -1로 XFF를 끈다.
         TRUSTED_PROXY_HOPS: "0",
-        QUOTA_INSTALLATION_DAILY: "10",
+        ...quotaEnv,
         QUOTA_INSTALLATION_CONCURRENT: "1",
-        // 전체 일일 상한. 오픈베타_계획_2026-08-13 §4-2의 산식에서 나온 값이다:
-        // (월 10만원 − AWS 고정비 5만) ÷ 건당 4원 ≈ 12,500회/월 ≈ 일 416회 → 400.
-        // ⚠ 입력값 둘(AWS 고정비 실측·Gemini 건당 단가)이 아직 측정 전이라 잠정치다.
-        //   단가가 4원을 크게 넘으면 이 값이 아니라 QUOTA_INSTALLATION_DAILY를 먼저 낮춘다.
-        QUOTA_GLOBAL_DAILY: "400",
         ANALYSIS_STALE_AFTER_SECONDS: "300",
         RATE_IP_REGISTER: "5",
         RATE_IP_REGISTER_WINDOW: "3600",
@@ -664,6 +682,9 @@ export class AppStack extends Stack {
         DATABASE_SSL: "true",
         PGDATABASE: "standin",
         DISCORD_ALERT_MENTION: discordAlertMention,
+        // 실패한 분석의 쿼터 환불이 여기서 일어난다(상류 혼잡·입력 저장 실패).
+        // BFF와 같은 값이어야 소비한 창을 그대로 되돌린다.
+        ...quotaEnv,
       },
       secrets: {
         PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
