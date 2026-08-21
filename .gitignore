@@ -3,6 +3,10 @@ cdk.out/
 *.js
 *.d.ts
 !jest.config.js
+# CDK가 TS를 같은 자리에 컴파일하므로 *.js를 통째로 무시한다. 손으로 쓴 소스는
+# 예외로 되돌린다 — 그러지 않으면 커밋에서 조용히 빠지고 배포 디렉터리가 깨진다.
+!watchdog/**/*.js
+!lambda/**/*.js
 .cdk.staging/
 *.log
 

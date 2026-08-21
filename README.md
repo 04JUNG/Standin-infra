@@ -6,7 +6,9 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 
 [![Standin AWS 아키텍처](docs/architecture/standin-aws-architecture.png)](docs/architecture/standin-aws-architecture.html)
 
-> `Standin-infra`의 현재 CDK 선언 기준이다. CloudWatch는 ECS 컨테이너 로그(14일 보존)와 Container Insights만 구성되어 있으며, 대시보드·알람·SNS 알림은 아직 없다. 이미지를 클릭하면 확대 가능한 다이어그램을 볼 수 있다.
+> `Standin-infra`의 현재 CDK 선언 기준이다. 이미지를 클릭하면 확대 가능한 다이어그램을 볼 수 있다.
+>
+> 관측성은 CloudWatch 대신 **구조화 로그 → BFF 자체 집계 → 디스코드 알림**으로 간다. CloudWatch는 컨테이너 로그(14일)와 Container Insights만 남기고 일상적으로 열지 않는다. 아래 「인프라 이벤트 알림」·「로그 출하 경로」·「운영 대시보드」 절과 마스터독스의 「관측성 — 로그·모니터링·디스코드 알림」 참고. 다이어그램에는 EventBridge·Lambda·외부 감시자가 아직 반영되지 않았다.
 
 ## 스택 구성
 
@@ -22,7 +24,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 
 - **NAT Gateway 없음** (월 ~$32 절약). 태스크는 퍼블릭 서브넷 + 퍼블릭 IP로 외부(VLM API·S3)에 나가고, 인바운드는 보안그룹으로 막는다. RDS는 isolated 서브넷이라 인터넷에서 닿지 않는다.
 - **공개 경계는 BFF 하나뿐.** 추론 서버는 무인증이므로(`Standin-server/docs/API_CONTRACT.md`) ALB에 붙이지 않고 Cloud Map 내부 DNS(`inference.standin.local`)로만 노출한다. 보안그룹도 BFF에서 오는 8000만 연다.
-- **도메인 없이 HTTPS.** CloudFront 기본 `*.cloudfront.net` 인증서를 공개 진입점으로 쓴다. API 캐시는 끄고 모든 메서드·헤더·쿠키·쿼리스트링을 BFF로 전달한다. ALB는 CloudFront가 붙이는 비밀 헤더가 없는 요청을 403으로 거부한다.
+- **ALB에서 HTTPS 종료.** `api.standinpose.com`을 ALB에 CNAME으로 연결하고 서울 리전 ACM 인증서를 443 리스너에 붙인다. 80은 443으로 영구 리디렉트하며 CloudFront는 사용하지 않는다.
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
 - **GPU 전환 경로.** 포즈 백엔드를 GPU로 올리면 추론 서비스만 EC2 캐패시티 프로바이더로 옮긴다. 클러스터·ALB·BFF는 그대로다. Fargate는 GPU를 지원하지 않는다.
@@ -83,13 +85,13 @@ AZ 재분산을 상수로 못 박아 회귀를 막는다.
 
 ```bash
 # 1. 코드와 저장소만 배포 — 사용자와 추론 모두 off
-npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=false -c refineFeatureEnabled=false
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://api.standinpose.com -c refineEnabled=false -c refineFeatureEnabled=false
 
 # 2. 내부 canary — 추론만 on, 사용자는 off
-npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=true -c refineFeatureEnabled=false
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://api.standinpose.com -c refineEnabled=true -c refineFeatureEnabled=false
 
 # 3. E2E 통과 후 사용자 공개
-npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net -c refineEnabled=true -c refineFeatureEnabled=true
+npx cdk deploy StandinApp -c appEnv=production -c publicUrl=https://api.standinpose.com -c refineEnabled=true -c refineFeatureEnabled=true
 ```
 
 두 flag는 별개다. 추론 endpoint가 살아 있어도 BFF flag가 꺼져 있으면 클라이언트에 노출되지
@@ -118,7 +120,7 @@ BFF는 로그인 없이 설치 단위로 쓰이므로 서버가 사용량을 강
 | `ANALYSIS_STALE_AFTER_SECONDS` | `300` | 이 시간 넘게 진행 중인 Job은 유실로 보고 정리 |
 | `RATE_IP_REGISTER` / `_WINDOW` | `5` / `3600` | IP별 설치 발급 burst |
 | `RATE_IP_ANALYZE` / `_WINDOW` | `5` / `60` | IP별 분석 요청 burst |
-| `TRUSTED_PROXY_HOPS` | `1` | XFF 오른쪽에서 신뢰하는 프록시 홉 수 |
+| `TRUSTED_PROXY_HOPS` | `0` | XFF에서 client IP 오른쪽의 신뢰 주소 수 |
 | `IP_HASH_SALT` | Secrets Manager | IP 해시 솔트(`standin/<env>/ip-hash-salt`, 자동 생성) |
 
 `QUOTA_GLOBAL_DAILY`를 빼면 앱의 코드 기본값과 같은 값이다 — 목적은 운영 중 조정할 손잡이를 만드는 것이다.
@@ -126,13 +128,10 @@ BFF는 로그인 없이 설치 단위로 쓰이므로 서버가 사용량을 강
 
 ### ⚠ `TRUSTED_PROXY_HOPS`는 요청 체인에 묶여 있다
 
-체인이 `클라 → CloudFront → ALB → BFF`이므로 BFF가 보는 `X-Forwarded-For`는
-`…, <뷰어 IP>, <CloudFront 엣지 IP>`다. 즉 **오른쪽에서 2번째가 실제 client IP**이고 값은 `1`이다.
-
-CloudFront가 `ALL_VIEWER_EXCEPT_HOST_HEADER`로 클라가 보낸 XFF까지 그대로 전달하므로
-왼쪽 항목은 위조 가능하다. 이 값을 실제 프록시 수보다 **크게** 잡으면 클라가 헤더를 조작해
-IP 제한을 통째로 우회한다. WAF를 앞에 끼우거나 ALB를 직접 노출하는 등 체인이 바뀌면
-이 값도 함께 바꾼다. ALB가 CloudFront 비밀 헤더 없는 요청을 403으로 막는 것이 이 전제를 지킨다.
+체인이 `클라 → ALB → BFF`이고 ALB는 자신이 관측한 client IP를 XFF 오른쪽 끝에
+append한다. ALB 자신은 XFF에 들어가지 않으므로 client IP 오른쪽의 주소 수는 **0**이다.
+클라가 보낸 왼쪽 XFF는 위조 가능하지만 오른쪽 끝의 ALB 관측값은 바뀌지 않는다. WAF나
+다른 프록시를 앞에 넣어 client IP 오른쪽에 주소가 추가되면 이 값도 함께 바꾼다.
 
 IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키로 쓰고, IPv6는 `/64`로 묶는다.
 솔트를 교체하면 진행 중인 IP 카운터가 리셋된다(창이 최대 1시간이라 영향은 작다).
@@ -153,7 +152,8 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 | context | 값 | 틀리면 무슨 일이 나나 |
 |---|---|---|
 | `appEnv` | `production` | `development`면 실서비스가 **mock VLM·합성 포즈 라이브러리로 뒤집힌다** |
-| `publicUrl` | CloudFront URL | 비면 OAuth 콜백과 이메일 인증 링크가 깨진다 |
+| `publicUrl` | `https://api.standinpose.com` | 비면 OAuth 콜백과 이메일 인증 링크가 깨진다 |
+| `certificateArn` | 서울 리전 ACM 인증서 ARN | 발급 완료된 인증서가 아니면 443 리스너 배포가 실패한다 |
 | `refineEnabled` | `true` | `false`면 refine이 꺼진다(배포는 항상 무중단이라 다운타임은 없다) |
 | `refineFeatureEnabled` | `true` | `false`면 클라이언트에서 refine이 사라진다 |
 
@@ -197,20 +197,20 @@ npx cdk deploy StandinApp -c appEnv=production -c refineEnabled=false -c refineF
 
 `StandinApp`은 ECR에 `latest` 태그가 있어야 태스크가 기동한다. **2번과 3번 사이에 이미지 푸시가 반드시 들어간다.**
 
-배포 후 출력되는 `CloudFrontUrl`을 `cdk.json`의 `publicUrl`에 채우고 `StandinApp`을 다시 배포한다. OAuth 콜백과 이메일 인증 링크가 이 HTTPS 값을 쓴다.
+`cdk.json`의 `publicUrl`과 `certificateArn`을 채운 뒤 배포한다. OAuth 콜백과 이메일 인증
+링크는 `https://api.standinpose.com`을 쓴다.
 
 ```bash
 npx cdk deploy StandinApp
-# 출력 예: CloudFrontUrl=https://dxxxxxxxxxxxxx.cloudfront.net
-
-npx cdk deploy StandinApp -c publicUrl=https://dxxxxxxxxxxxxx.cloudfront.net
+# 출력: PublicUrl=https://api.standinpose.com
 ```
 
-클라이언트의 API 기준 URL과 각 OAuth provider의 Redirect URI도 `CloudFrontUrl`을 사용한다. `AlbUrl`은 CloudFront origin 확인용 출력이며 직접 호출하면 403이 정상이다.
+클라이언트의 API 기준 URL과 각 OAuth provider의 Redirect URI도 `PublicUrl`을 사용한다.
+`AlbUrl`은 가비아 CNAME 대상 확인용이며 인증서 이름이 달라 직접 HTTPS 호출하지 않는다.
 
 BFF는 OAuth 성공 시 `OAUTH_SUCCESS_REDIRECT=standin://auth/callback`으로 리디렉트한다. URL에는 토큰 대신 1회용 교환 코드만 담기며, 데스크톱 앱이 `/v1/auth/oauth/exchange`로 토큰을 받아간다.
 
-운영 가입 페이지 `https://standin-seven.vercel.app`은 BFF의 `CORS_ORIGINS`에 허용돼 있다. Vercel의 `VITE_API_BASE_URL`은 `CloudFrontUrl`로 설정하며, Origin 비교가 정확히 일치하도록 Vercel 주소 끝에는 `/`를 붙이지 않는다.
+운영 가입 페이지 `https://standin-seven.vercel.app`은 BFF의 `CORS_ORIGINS`에 허용돼 있다. Vercel의 `VITE_API_BASE_URL`은 `https://api.standinpose.com`으로 설정하며, Origin 비교가 정확히 일치하도록 Vercel 주소 끝에는 `/`를 붙이지 않는다.
 
 ## 배포 전에 끝내야 할 것
 
@@ -303,6 +303,84 @@ python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
 
 시크릿 값을 바꾼 뒤에는 BFF ECS 서비스를 강제 재배포해야 새 태스크가 값을 읽는다. 개인 Gmail을 쓸 경우 일반 계정 비밀번호가 아니라 앱 비밀번호를 사용한다. SES SMTP를 쓸 경우 SES 콘솔에서 별도로 발급한 SMTP 자격증명을 사용하며 IAM 액세스 키를 그대로 넣지 않는다.
 
+### 6. 장애 알림 디스코드 웹훅
+
+`standin/discord` 시크릿에 채널별 웹훅 URL을 채운다. **키 3개가 빈 값으로 이미 만들어져 있다** — SMTP·OAuth와 같은 이유다(ECS가 없는 키를 참조하면 컨테이너가 시작조차 못 한다).
+
+| 키 | 채널 | 등급 |
+|---|---|---|
+| `webhookAlert` | `#standin-alert` | P1 — 기동 실패·DB 접속 불가·추론 헬스 연속 실패 |
+| `webhookWarn` | `#standin-warn` | P2 — 처리되지 않은 예외·분석 실패 |
+| `webhookOps` | `#standin-ops` | P3 — 기동·배포·요약 |
+
+디스코드 채널에서 **채널 설정 → 연동 → 웹후크**로 발급한다. **웹훅 URL 자체가 비밀이다** — URL을 아는 누구나 그 채널에 글을 쓸 수 있으므로 코드·문서·이슈에 남기지 않는다.
+
+값이 비어 있으면 알림기는 조용히 no-op으로 동작한다. 기동에는 문제가 없고 알림만 나가지 않는다.
+
+**P1에는 `@here` 멘션이 기본으로 붙는다**(2026-08-18 팀 결정). 새벽에도 울린다는 뜻이므로, 어떤 사건을 P1로 올릴지는 그때마다 "이게 새벽 3시에 울려도 되는가"로 판단한다. 야간 호출을 끄려면 합성 시점에 비운다.
+
+```bash
+DISCORD_ALERT_MENTION="" npx cdk deploy StandinApp
+```
+
+설계 정본은 마스터독스의 「관측성 — 로그·모니터링·디스코드 알림」이다.
+
+### 7. 인프라 이벤트 알림 (자동)
+
+`InfraAlerts` Lambda와 EventBridge 규칙 3개가 스택에 함께 만들어진다. 채울 값은 없다 — `standin/discord`를 실행 시점에 읽는다.
+
+여기서 잡는 사건은 **앱이 원리적으로 보고할 수 없는 것들**이다.
+
+| 규칙 | 잡는 것 | 등급 |
+|---|---|---|
+| `TaskStoppedRule` | 태스크 기동 실패·OOM(exit 137)·필수 컨테이너 비정상 종료 | P1 |
+| `DeploymentStateRule` | 서킷브레이커 롤백(`SERVICE_DEPLOYMENT_FAILED`) / 배포 완료 | P1 / P3 |
+| `DatabaseEventRule` | RDS 저장공간·장애조치·유지보수 | P1 / P2 |
+
+정상 종료(롤링 배포·스케일 인)는 Lambda가 걸러 낸다. 이벤트 패턴만으로는 `stopCode`와 `exitCode` 조합을 판단할 수 없어서 코드에서 거른다.
+
+**롤백 알림이 이 셋 중 가장 값어치가 크다.** 서킷브레이커가 롤백하면 옛 태스크가 계속 돌아 서비스는 "정상"으로 보이고, 새 코드가 반영되지 않은 것을 아무도 모른다.
+
+### 8. 외부 헬스 감시자 (AWS 밖, 선택이지만 권장)
+
+위 7번까지는 전부 같은 AWS 계정 안에 있다. 계정·리전이 통째로 흔들리면 알림도 함께 죽는다. 그 마지막 구멍은 `watchdog/cloudflare`의 Cloudflare Worker가 메운다 — 1분마다 공개 API `/healthz`를 밖에서 두드리고 2회 연속 실패하면 P1을 보낸다.
+
+배포는 [watchdog/cloudflare/README.md](watchdog/cloudflare/README.md) 참고. Cloudflare 무료 등급으로 충분하다.
+
+## 로그 출하 경로
+
+기본은 CloudWatch Logs다(`awslogs` 드라이버, 보존 14일).
+
+```bash
+npx cdk deploy StandinApp -c logRetentionDays=3          # 보존만 줄인다
+npx cdk deploy StandinApp -c logShipping=firelens        # 외부 수집기로 보낸다
+```
+
+| 값 | 동작 |
+|---|---|
+| `cloudwatch`(기본) | ECS `awslogs` 드라이버 → CloudWatch Logs |
+| `firelens` | fluent-bit 사이드카 → Loki/Grafana Cloud. CloudWatch에는 사이드카 자신의 로그만 3일 남는다 |
+
+`firelens`로 켜면 `standin/log-shipping` 시크릿(`host`·`user`·`password`)이 함께 만들어진다. 값을 채운 뒤 재배포한다.
+
+**언제 켜나**: 계획 문서 §8의 기준은 "3단계 자체 대시보드로 원인을 못 찾아 CloudWatch 콘솔을 여는 일이 월 3회를 넘을 때"다. 그 전에 세우면 유지비만 나간다. 지금은 스위치만 배선돼 있다.
+
+⚠ `firelens` 경로는 **실제 수집기에 붙여 검증한 적이 없다.** 처음 켤 때는 반드시 development에서 먼저 확인한다.
+
+`logRetentionDays`는 CloudWatch가 받는 값만 허용한다(1·3·5·7·14·30·60·90·180·365). 기본 14일은 클로즈베타 데이터 수집 문서의 "운영 로그" 정책과 맞물려 있으므로 줄이기 전에 팀 확인이 필요하다.
+
+## 운영 대시보드
+
+지표는 BFF가 1분 롤업으로 RDS에 쌓고, 화면도 BFF가 낸다.
+
+```
+https://api.standinpose.com/v1/admin/ops/dashboard
+```
+
+관리자 토큰(`standin/<env>/beta-review-token`)을 화면에서 입력한다. 주소창에 `?token=`으로 넘겨도 되지만 페이지가 로드 즉시 지운다.
+
+별도 박스를 세우지 않은 이유: 데이터가 isolated 서브넷의 RDS에 있어 **어떤 대시보드든 BFF를 거쳐야 읽는다.** 따로 세워도 BFF가 죽으면 화면만 뜨고 숫자는 안 나온다 — 월 $5~14를 내고 독립성을 사지 못한다. 그 독립성은 위 8번 외부 감시자가 월 $0에 준다.
+
 ## CI/CD
 
 `templates/`의 워크플로를 각 앱 저장소의 `.github/workflows/deploy.yml`로 복사한다.
@@ -334,9 +412,19 @@ NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
 
 ## 알려진 한계
 
-- **CloudFront→ALB 구간은 HTTP.** 사용자→CloudFront는 공인 HTTPS지만 origin 구간은 아직 HTTP다. 도메인이 준비되면 ALB에 ACM 인증서를 붙이고 CloudFront origin policy를 `HTTPS_ONLY`로 바꾼다.
+- **CDN·WAF 없음.** 클라이언트가 인터넷 공개 ALB에 직접 연결한다. 대규모 DDoS 완화나 엣지 WAF가 필요해지면 별도 공개 경계를 다시 검토한다.
 - **단일 태스크·단일 AZ.** `desiredCount: 1`, RDS `multiAz: false`. 가용성이 필요해지면 올린다.
-- **Job 유실.** BFF의 분석 Job이 아직 프로세스 내 fire-and-forget이라 배포·태스크 교체 시 진행 중 작업이 사라진다. SQS로 옮기기 전까지의 감수 사항이다.
+- **Job 실행 모드.** 기본 `jobExecutionMode=inline`은 롤백 경로다. 앱 서버 #23 배포와
+  queue/worker 검증 뒤 `-c jobExecutionMode=sqs`로 전환한다. SQS는 DLQ 3회, Worker lease와
+  visibility heartbeat를 사용하며 queue age·DLQ를 CloudWatch Alarm으로 감시한다.
+
+### SQS 전환 순서
+
+1. `Standin-app-server`의 outbox/worker 이미지를 먼저 배포하되 `inline` 유지
+2. 이 스택을 배포해 SQS·DLQ와 desiredCount 0 Worker를 생성
+3. staging에서 `-c jobExecutionMode=sqs`로 Worker 1개 활성화
+4. BFF 강제 재시작·Worker 중단 중에도 Job이 완료되는지 확인
+5. queue age와 DLQ가 비어 있는지 확인한 뒤 production을 `sqs`로 전환
 - **RDS `removalPolicy: SNAPSHOT`, `deletionProtection: false`.** 초기 단계 설정이다. 실사용자가 생기면 `RETAIN` + 삭제 보호로 바꿀 것.
 - **환경 분리 없음.** dev/prod 스택을 따로 두지 않았다. `appEnv`는 같은 스택의 동작만 바꾼다. 두 환경을 동시에 띄우려면 스택 이름을 환경별로 나눠야 한다.
 - **SMTP 공급자 운영 설정 필요.** 인프라 배선은 `standin/smtp`로 완료돼 있지만 실제 발신 계정과 주소는 별도로 준비해야 한다. SES를 선택하면 프로덕션 액세스 신청과 발신 주소 인증에 시간이 걸릴 수 있다.
