@@ -16,14 +16,17 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 |---|---|---|
 | `StandinRegistry` | ECR 저장소 2개 | 이미지는 앱보다 오래 산다. 앱 스택을 지워도 롤백 대상이 남아야 한다 |
 | `StandinCicd` | GitHub OIDC 공급자 + 배포 역할 | 앱 스택보다 먼저 있어야 CI가 이미지를 밀어 넣을 수 있다 |
-| `StandinApp` | VPC·보안그룹·RDS·ECS·ALB·S3·시크릿 | 아래 참고 |
+| `StandinApp` | VPC·보안그룹·RDS·ECS·ALB·S3·시크릿 (프로덕션) | 아래 참고 |
+| `StandinStagingApp` | 같은 구성의 테스트 환경 | 프로덕션에 바로 배포하지 않기 위해. 「[테스트 환경(staging)](#테스트-환경staging)」 참고 |
+
+`StandinRegistry`와 `StandinCicd`는 **두 환경이 공유한다.** ECR을 나누지 않는 이유는, staging에서 검증한 그 이미지 SHA를 그대로 프로덕션에 올려야 검증이 의미가 있기 때문이다 — 저장소가 갈리면 "staging에서 통과한 이미지"와 "프로덕션에 올라간 이미지"가 다른 빌드일 수 있다.
 
 **네트워크·DB·서비스를 한 스택에 둔 이유**: 보안그룹이 세 영역에 걸쳐 서로를 참조한다(ALB → BFF → 추론/DB). 스택을 나누면 CDK가 리스너·타깃을 붙이며 보안그룹 규칙을 자동 추가하는 지점에서 순환 의존이 계속 생긴다. 이 규모에서는 한 스택이 더 단순하고 안전하다.
 
 ## 설계 결정
 
 - **NAT Gateway 없음** (월 ~$32 절약). 태스크는 퍼블릭 서브넷 + 퍼블릭 IP로 외부(VLM API·S3)에 나가고, 인바운드는 보안그룹으로 막는다. RDS는 isolated 서브넷이라 인터넷에서 닿지 않는다.
-- **공개 경계는 BFF 하나뿐.** 추론 서버는 무인증이므로(`Standin-server/docs/API_CONTRACT.md`) ALB에 붙이지 않고 Cloud Map 내부 DNS(`inference.standin.local`)로만 노출한다. 보안그룹도 BFF에서 오는 8000만 연다.
+- **공개 경계는 BFF 하나뿐.** 추론 서버는 무인증이므로(`Standin-server/docs/API_CONTRACT.md`) ALB에 붙이지 않고 Cloud Map 내부 DNS(`inference.standin.local`, staging은 `inference.standin-staging.local`)로만 노출한다. 보안그룹도 BFF에서 오는 8000만 연다.
 - **ALB에서 HTTPS 종료.** `api.standinpose.com`을 ALB에 CNAME으로 연결하고 서울 리전 ACM 인증서를 443 리스너에 붙인다. 80은 443으로 영구 리디렉트하며 CloudFront는 사용하지 않는다.
 - **BFF는 arm64(Graviton), 추론은 x86_64.** BFF는 같은 성능에 더 싸고, 추론은 ONNX 런타임 호환성을 위해 x86을 유지한다.
 - **자격증명은 코드에 없다.** DB 비밀번호는 CDK가 Secrets Manager에 생성하고, JWT 키도 자동 생성한다. 태스크는 IAM 역할로 S3를 읽는다.
@@ -156,6 +159,14 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 | `certificateArn` | 서울 리전 ACM 인증서 ARN | 발급 완료된 인증서가 아니면 443 리스너 배포가 실패한다 |
 | `refineEnabled` | `true` | `false`면 refine이 꺼진다(배포는 항상 무중단이라 다운타임은 없다) |
 | `refineFeatureEnabled` | `true` | `false`면 클라이언트에서 refine이 사라진다 |
+| `envName` | `prod` | `staging`이면 `StandinStagingApp`을 만든다. **파일에 `staging`을 커밋해 두면 다음 사람의 무인자 배포가 프로덕션이 아니라 staging으로 나간다** |
+| `stagingActive` | `false` | `true`면 staging Fargate 태스크가 계속 떠 있어 월 ~$51이 더 나간다 |
+| `corsOrigins` | 아래 CORS 항목 참고 | 빠진 Origin은 가입 페이지에서 CORS 오류가 난다 |
+| `oauthSuccessRedirect` | `standin://auth/callback` | 클라이언트가 등록한 스킴과 다르면 OAuth 로그인이 앱으로 돌아오지 못한다 |
+| `quotaGlobalDaily` | `"400"` | 앱의 전체 일일 상한. 오픈베타_계획 §4-2 산식에서 나온 값이다 |
+
+`stagingPublicUrl`·`stagingCertificateArn`·`stagingQuotaGlobalDaily`은 staging 전용이라
+프로덕션 배포에 영향을 주지 않는다.
 
 > 실제로 겪었다. 사용량 제한 env를 배포하려고 `cdk diff`를 돌렸더니 `REFINE_ENABLED 1→0`,
 > `REFINE_FEATURE_ENABLED true→false`가 함께 나왔다 — 배포된 스택은 refine이 켜져 있는데
@@ -164,6 +175,116 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 
 **배포 상태를 바꿀 때는 `cdk.json`을 같은 PR에서 고친다.** `-c`는 일회성 실험에만 쓴다.
 배포 전 `npx cdk diff StandinApp`으로 **의도한 리소스만 바뀌는지** 반드시 확인한다.
+
+## 테스트 환경(staging)
+
+프로덕션에 바로 배포하지 않기 위한 두 번째 환경이다. `-c envName=staging`이면 같은 코드가
+`StandinStagingApp` 스택을 만든다.
+
+```bash
+npx cdk deploy StandinStagingApp -c envName=staging
+```
+
+### ⚠ 프로덕션 스택 ID는 절대 바꾸지 않는다
+
+CloudFormation은 **스택 이름으로 리소스를 추적한다.** 대칭을 맞추겠다고 `StandinApp`을
+`StandinProdApp` 같은 이름으로 "정리"하면 CloudFormation이 이를 새 스택으로 보고
+**VPC·RDS·ALB를 통째로 새로 만든다.** 프로덕션은 배포된 이름 그대로 두고 staging만 새
+이름을 받는다. 물리 이름(시크릿·KMS 별칭·IAM 정책)도 같은 이유로 프로덕션 쪽은 손대지
+않았다 — 시크릿 이름이 바뀌면 JWT 서명 키가 교체되어 모든 세션이 끊긴다.
+
+### 두 환경이 갈리는 것 / 공유하는 것
+
+| | 프로덕션 | staging |
+|---|---|---|
+| 스택 | `StandinApp` | `StandinStagingApp` |
+| VPC·RDS·ALB·ECS | 각자 | 각자 |
+| 시크릿 | `standin/jwt`, `standin/db` … | `standin/staging/jwt`, `standin/staging/db` … |
+| KMS 별칭 | `alias/standin-production-beta-data` | `alias/standin-staging-beta-data` |
+| 내부 DNS | `standin.local` | `standin-staging.local` |
+| 운영 정책 | `standin-inference-operator` | `standin-staging-inference-operator` |
+| ECR 저장소 | `standin/bff`, `standin/inference` — **공유** | |
+| OIDC 배포 역할 | `standin-github-deploy` — **공유** (GitHub environment로 구분) | |
+
+이름 충돌은 합성에서 드러나지 않고 **두 번째 배포가 시작된 뒤** `CREATE_FAILED`로 나온다.
+그래서 `scripts/assert-env-isolation.mjs`가 CI에서 두 템플릿의 고정 이름을 비교한다.
+새 리소스에 이름을 직접 지정할 때는 이 검사가 통과하는지 확인한다.
+
+### staging도 `appEnv=production`으로 돌린다
+
+mock으로 도는 환경은 **인프라 배선만** 확인할 뿐 추론 회귀를 잡지 못한다 — 그런 회귀는
+프로덕션에서 처음 보게 된다. staging은 실모델·실 포즈 라이브러리로 돌리고, 대신 비용을
+쿼터로 막는다(`stagingQuotaGlobalDaily`, 기본 50).
+
+따라서 staging에도 다음이 필요하다:
+
+- **포즈 라이브러리 번들** — staging `AssetsBucketName`에도 올려야 한다([INFERENCE_OPERATOR_GUIDE.md](INFERENCE_OPERATOR_GUIDE.md) 절차를 그대로 반복). 없으면 추론 태스크가 기동에 실패한다(의도된 동작).
+- **VLM API 키** — `standin/staging/vlm`에 채운다. 프로덕션과 같은 키를 써도 되지만 사용량이 합산된다.
+- **OAuth·SMTP 값** — `standin/staging/oauth`, `standin/staging/smtp`. OAuth 콜백 URL이 staging 도메인이라 각 공급자 콘솔에 리디렉트 URI를 추가로 등록해야 한다.
+
+### 평소에는 태스크를 0개로 둔다
+
+스택은 남겨 두고 Fargate 태스크만 0으로 둔다. 유휴 비용이 월 ~$79에서 ~$28(ALB+RDS)로
+내려가고, 도메인·인증서·시크릿을 매번 다시 세팅하지 않아도 된다.
+
+```bash
+npx cdk deploy StandinStagingApp -c envName=staging -c stagingActive=true
+```
+
+테스트가 끝나면 `stagingActive`를 다시 `false`로 되돌려 배포한다. `aws ecs update-service
+--desired-count 1`로 임시로 올릴 수도 있지만, 태스크 정의가 바뀌는 다음 `cdk deploy`에서
+0으로 되돌아간다. 재현 가능한 쪽은 컨텍스트 스위치다.
+
+### 클라이언트는 환경별로 빌드한다
+
+**앱 설정에서 서버 주소만 바꾸는 런타임 스위치로는 안 된다.** OAuth 딥링크 스킴은 앱을
+설치할 때 OS에 등록되므로 런타임에 바꿀 수 없다. 두 빌드가 같은 `standin://`를 쓰면 어느
+앱이 링크를 받을지 OS가 정하고(Windows는 마지막 등록이 이긴다), staging 로그인의 1회용
+교환 코드가 프로덕션 앱으로 넘어간다.
+
+| | 프로덕션 빌드 | staging 빌드 |
+|---|---|---|
+| API 기준 URL | `https://api.standinpose.com` | `https://staging.api.standinpose.com` |
+| 딥링크 스킴 | `standin://auth/callback` | `standin-staging://auth/callback` |
+| bundle id | 현행 | 별도 id (동시 설치 가능해야 한다) |
+
+두 값 모두 스택 출력(`PublicUrl`, `OauthSuccessRedirect`)에서 읽을 수 있다. 앱에는 눈에
+보이는 환경 배지를 넣는다 — 테스터가 어느 쪽에 버그를 보고하는지 헷갈리는 것이 실제로
+가장 흔한 사고다.
+
+**Vercel 가입 페이지**는 Preview 환경변수로 `VITE_API_BASE_URL`을 staging으로 돌린다.
+Preview 도메인은 배포마다 바뀌어 CORS에 넣을 수 없으므로 **브랜치 고정 도메인**
+(`standin-seven-git-develop-….vercel.app`)을 쓰고, 그 주소를 `cdk.json`의
+`stagingCorsOrigins`에 추가한다. 끝에 `/`를 붙이지 않는다 — Origin 비교는 정확히 일치해야
+한다.
+
+**OAuth 공급자 콘솔**은 staging용 클라이언트를 따로 만드는 쪽을 권한다. 시크릿이 이미
+`standin/staging/oauth`로 갈려 있고, 하나의 클라이언트에 리디렉트 URI를 둘 넣으면 staging
+설정 실수가 프로덕션 클라이언트를 건드릴 수 있다.
+
+`scripts/assert-env-isolation.mjs`가 `PUBLIC_URL`·`OAUTH_SUCCESS_REDIRECT`·`CORS_ORIGINS`
+세 값이 두 환경에서 갈리는지 CI에서 확인한다. 이 셋은 이름 충돌과 달리 **배포가 성공한
+뒤에** 문제가 되므로 합성 단계에서 잡아야 한다.
+
+### 처음 한 번만 하는 준비
+
+1. `staging.api.standinpose.com`(또는 원하는 호스트)용 **서울 리전 ACM 인증서**를 발급하고 가비아에 검증 CNAME을 넣는다.
+2. `cdk.json`의 `stagingPublicUrl`·`stagingCertificateArn`을 채운다. 둘 중 하나라도 비어 있으면 `-c envName=staging` 배포가 합성 단계에서 막힌다.
+3. `npx cdk deploy StandinStagingApp -c envName=staging`
+4. 스택 출력의 `AlbUrl`을 가비아에 CNAME으로 연결한다.
+5. 위 「staging도 `appEnv=production`으로 돌린다」의 시크릿·번들을 채운다.
+6. 앱 저장소에 GitHub environment `staging`을 만들고 배포 가능 브랜치를 `develop`으로 제한한다. OIDC 역할은 이미 `:environment:staging`을 신뢰한다.
+7. 각 OAuth 공급자 콘솔에 staging 리디렉트 URI를 등록하고, staging 클라이언트 빌드에 `standin-staging://` 스킴을 등록한다(위 「클라이언트는 환경별로 빌드한다」).
+
+### 승격 흐름
+
+```
+develop 머지 → GitHub env: staging → StandinStagingApp 에 이미지 SHA 배포 → 검증
+                                                                              ↓
+main 머지    → GitHub env: beta    → StandinApp 에 **같은 SHA** 배포
+```
+
+ECR을 공유하므로 프로덕션 배포는 새로 빌드하지 않고 staging에서 통과한 태그를 그대로 쓴다.
 
 ## 배포는 2단계로 나눈다
 
@@ -208,9 +329,9 @@ npx cdk deploy StandinApp
 클라이언트의 API 기준 URL과 각 OAuth provider의 Redirect URI도 `PublicUrl`을 사용한다.
 `AlbUrl`은 가비아 CNAME 대상 확인용이며 인증서 이름이 달라 직접 HTTPS 호출하지 않는다.
 
-BFF는 OAuth 성공 시 `OAUTH_SUCCESS_REDIRECT=standin://auth/callback`으로 리디렉트한다. URL에는 토큰 대신 1회용 교환 코드만 담기며, 데스크톱 앱이 `/v1/auth/oauth/exchange`로 토큰을 받아간다.
+BFF는 OAuth 성공 시 `OAUTH_SUCCESS_REDIRECT`(`cdk.json`의 `oauthSuccessRedirect`, 프로덕션은 `standin://auth/callback`)로 리디렉트한다. URL에는 토큰 대신 1회용 교환 코드만 담기며, 데스크톱 앱이 `/v1/auth/oauth/exchange`로 토큰을 받아간다.
 
-운영 가입 페이지 `https://standin-seven.vercel.app`은 BFF의 `CORS_ORIGINS`에 허용돼 있다. Vercel의 `VITE_API_BASE_URL`은 `https://api.standinpose.com`으로 설정하며, Origin 비교가 정확히 일치하도록 Vercel 주소 끝에는 `/`를 붙이지 않는다.
+운영 가입 페이지 `https://standin-seven.vercel.app`은 BFF의 `CORS_ORIGINS`(`cdk.json`의 `corsOrigins`)에 허용돼 있다. Vercel의 `VITE_API_BASE_URL`은 `https://api.standinpose.com`으로 설정하며, Origin 비교가 정확히 일치하도록 Vercel 주소 끝에는 `/`를 붙이지 않는다.
 
 ## 배포 전에 끝내야 할 것
 
@@ -407,6 +528,15 @@ https://api.standinpose.com/v1/admin/ops/dashboard
 
 장기 액세스 키를 만들지 않는다 — GitHub이 실행마다 발급하는 OIDC 토큰으로 역할을 assume한다.
 
+배포 워크플로 템플릿(`templates/deploy-*.yml`)은 브랜치로 환경을 고른다 — `main`이면 GitHub
+environment `beta`(프로덕션), 그 외에는 `staging`이다. OIDC 역할은 **보호된 environment에
+붙은 job만** 신뢰하므로 워크플로에서 `environment:`를 지우면 role assume이 실패한다.
+
+클러스터·서비스 이름은 environment 변수(`ECS_CLUSTER`, `ECS_SERVICE`)로 넘긴다. 이름에
+CDK가 붙인 해시가 들어가 환경마다 다르고, 워크플로에 하드코딩하면 staging 배포가
+프로덕션으로 나갈 수 있다. 값은 각 스택의 `ClusterName`·`BffServiceName`·
+`InferenceServiceName` 출력에서 가져온다.
+
 ## 비용 (서울 리전 대략, 유휴 기준)
 
 | 항목 | 월 |
@@ -419,6 +549,17 @@ https://api.standinpose.com/v1/admin/ops/dashboard
 | **합계** | **~$80** |
 
 NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
+
+### staging 추가분
+
+| 상태 | 월 |
+|---|---|
+| 유휴 (`stagingActive=false`, 태스크 0개) | **~$28** — ALB $16 + RDS $12 |
+| 테스트 중 (`stagingActive=true`) | **~$79** — 프로덕션과 같은 구성 |
+
+태스크를 상시 띄우지 않는 이유가 이 표다. staging을 항상 켜 두면 인프라 고정비가 두 배가
+되어 `QUOTA_GLOBAL_DAILY` 산식(오픈베타_계획 §4-2)의 전제가 무너진다. 여기에 staging의
+Gemini 호출 비용이 별도로 붙으므로 `stagingQuotaGlobalDaily`를 낮게 유지한다.
 
 ## 알려진 한계
 
@@ -436,5 +577,6 @@ NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
 4. BFF 강제 재시작·Worker 중단 중에도 Job이 완료되는지 확인
 5. queue age와 DLQ가 비어 있는지 확인한 뒤 production을 `sqs`로 전환
 - **RDS `removalPolicy: SNAPSHOT`, `deletionProtection: false`.** 초기 단계 설정이다. 실사용자가 생기면 `RETAIN` + 삭제 보호로 바꿀 것.
-- **환경 분리 없음.** dev/prod 스택을 따로 두지 않았다. `appEnv`는 같은 스택의 동작만 바꾼다. 두 환경을 동시에 띄우려면 스택 이름을 환경별로 나눠야 한다.
+- **staging은 같은 AWS 계정에 있다.** 스택·물리 이름은 갈렸지만 IAM·서비스 쿼터·청구는 프로덕션과 같은 계정을 쓴다. staging 작업이 실수로 프로덕션 리소스를 건드릴 여지가 남아 있다. 폭발 반경을 완전히 끊으려면 Organizations로 계정을 나눠야 한다(그때는 CDK bootstrap·OIDC 공급자·교차계정 ECR pull이 추가로 필요하다).
+- **staging은 프로덕션과 규모가 다르지 않다.** 태스크 크기·RDS 인스턴스가 같아 부하 특성은 비슷하지만, `desiredCount`가 1이라 다중 태스크에서만 나는 문제(세션 고정, 동시성 경합)는 여기서도 잡히지 않는다.
 - **SMTP 공급자 운영 설정 필요.** 인프라 배선은 `standin/smtp`로 완료돼 있지만 실제 발신 계정과 주소는 별도로 준비해야 한다. SES를 선택하면 프로덕션 액세스 신청과 발신 주소 인증에 시간이 걸릴 수 있다.
