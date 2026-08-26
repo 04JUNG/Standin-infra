@@ -247,8 +247,16 @@ aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 #### 추론 서버 담당자 IAM 설정
 
 `StandinApp`은 `standin-inference-operator` 관리형 정책을 함께 만든다. 이 정책은
-`pose-library/` 아래의 업로드·조회와 해당 추론 ECS 서비스의 조회·재기동만 허용한다.
-버킷의 다른 경로, 객체 삭제, 다른 ECS 서비스 변경 권한은 포함하지 않는다.
+`pose-library/` 아래의 업로드·조회, 해당 추론 ECS 서비스의 조회·재기동, 그리고 **추론
+컨테이너 로그 그룹 하나의 읽기**만 허용한다. 버킷의 다른 경로, 객체 삭제, 다른 ECS 서비스
+변경 권한은 포함하지 않는다.
+
+로그를 연 이유: 배포가 안정화에 실패하면 스크립트는 "새 번들이 로드되지 않았다"까지만
+알려 주고 원인은 컨테이너 로그에만 남는다. 그때마다 관리자가 로그를 떠서 전달하면 담당자가
+스스로 되돌릴지 판단할 수 없다. 그룹은 `InferenceLogGroupName` 출력으로 알려 준다.
+
+BFF·worker·RDS 로그 그룹은 열지 않는다 — 사용자 데이터가 흐른다. 다른 그룹은 이름만
+보이고(`logs:DescribeLogGroups`, 콘솔 목록용) 내용은 열리지 않는다.
 
 사람별 IAM 사용자나 장기 액세스 키를 새로 만들지 말고, IAM Identity Center에서 추론 팀
 그룹용 권한 세트를 만든 뒤 출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책
@@ -263,6 +271,8 @@ aws sso login --profile standin-inference
 
 python scripts/deploy_pose_library.py data/      # 검증·업로드·재기동·확인
 python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
+
+aws logs tail <InferenceLogGroupName> --since 30m --profile standin-inference
 ```
 
 버킷·클러스터·서비스 이름은 스크립트에 기본값으로 들어 있다. 스택을 다시 만들어 이름이

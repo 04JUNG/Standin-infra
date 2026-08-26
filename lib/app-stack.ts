@@ -374,9 +374,13 @@ export class AppStack extends Stack {
       },
     });
 
+    // 드라이버를 붙잡아 둔다. 추론 운영자에게 넘길 로그 그룹이 이 안에 있다 —
+    // 이름을 문자열로 적으면 스택을 다시 만들 때 조용히 어긋난다.
+    const inferenceLogging = containerLogging(inferenceTask, "inference");
+
     inferenceTask.addContainer("inference", {
       image: ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, "latest"),
-      logging: containerLogging(inferenceTask, "inference"),
+      logging: inferenceLogging,
       environment: {
         APP_ENV: props.appEnv,
         // 1단계는 mock으로 인프라 배선만 확인하고, 2단계에서 실모델로 넘어간다.
@@ -438,6 +442,11 @@ export class AppStack extends Stack {
 
     // 번들을 받으려면 읽기 권한이 필요하다(태스크 역할 → 키를 환경에 두지 않는다).
     assets.grantRead(inferenceTask.taskRole);
+
+    // awslogs 드라이버는 컨테이너에 바인딩된 **뒤에야** 로그 그룹을 노출한다.
+    // firelens 모드에서는 로그가 CloudWatch에 남지 않으므로 그룹도 없다(undefined).
+    const inferenceLogGroup =
+      inferenceLogging instanceof ecs.AwsLogDriver ? inferenceLogging.logGroup : undefined;
 
     const inferenceService = new ecs.FargateService(this, "InferenceService", {
       cluster,
@@ -511,6 +520,43 @@ export class AppStack extends Stack {
           actions: ["ecs:DescribeServices", "ecs:UpdateService"],
           resources: [inferenceService.serviceArn],
         }),
+        // 배포가 안정화에 실패했을 때 이유를 보려면 로그가 필요하다. 안정화 실패는
+        // "새 번들이 로드되지 않았다"는 사실만 알려 주고 원인은 컨테이너 로그에만 있다.
+        // 추론 컨테이너 그룹 하나만 열어 준다 — BFF 로그에는 사용자 데이터가 흐른다.
+        ...(inferenceLogGroup
+          ? [
+              new iam.PolicyStatement({
+                sid: "ReadInferenceLogs",
+                actions: [
+                  "logs:DescribeLogStreams",
+                  "logs:GetLogEvents",
+                  "logs:FilterLogEvents",
+                  "logs:StartLiveTail",
+                  "logs:StartQuery",
+                ],
+                resources: [
+                  // 같은 그룹의 두 표기. 이벤트 API는 `:*`가 붙은 ARN을,
+                  // Live Tail은 붙지 않은 ARN을 권한 검사에 쓴다.
+                  inferenceLogGroup.logGroupArn,
+                  `arn:aws:logs:${this.region}:${this.account}:log-group:${inferenceLogGroup.logGroupName}`,
+                ],
+              }),
+              new iam.PolicyStatement({
+                // 아래 액션들은 IAM이 리소스 단위를 지원하지 않는다. 질의를 **시작**하는
+                // StartQuery가 위에서 추론 그룹으로 묶여 있으므로, 결과를 받아 오는
+                // 이 액션들이 넓어도 다른 그룹의 내용에는 닿지 못한다.
+                sid: "ReadOwnLogQueryResults",
+                actions: ["logs:GetQueryResults", "logs:DescribeQueries", "logs:StopQuery"],
+                resources: ["*"],
+              }),
+              new iam.PolicyStatement({
+                // 콘솔의 로그 그룹 목록이 이 호출로 그려진다. 이름만 보이고 내용은 보이지 않는다.
+                sid: "ListLogGroupNames",
+                actions: ["logs:DescribeLogGroups"],
+                resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:*`],
+              }),
+            ]
+          : []),
       ],
     });
 
@@ -840,6 +886,12 @@ export class AppStack extends Stack {
       description: "BFF refine exposure flag",
     });
     new CfnOutput(this, "ClusterName", { value: cluster.clusterName });
+    if (inferenceLogGroup) {
+      new CfnOutput(this, "InferenceLogGroupName", {
+        value: inferenceLogGroup.logGroupName,
+        description: "추론 운영자에게 읽기 권한이 열려 있는 유일한 로그 그룹",
+      });
+    }
     new CfnOutput(this, "InferenceOperatorPolicyArn", {
       value: inferenceOperatorPolicy.managedPolicyArn,
       description: "IAM Identity Center 팀 권한 세트 또는 기존 역할에 연결할 추론 운영 정책",
