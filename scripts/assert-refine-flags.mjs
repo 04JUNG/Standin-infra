@@ -1,12 +1,20 @@
 import { readFile } from "node:fs/promises";
 
-const [expectedInference, expectedBff] = process.argv.slice(2);
+const [
+  expectedInference,
+  expectedBff,
+  templatePath = "cdk.out/StandinApp.template.json",
+] = process.argv.slice(2);
 if (!["0", "1"].includes(expectedInference) || !["false", "true"].includes(expectedBff)) {
-  throw new Error("usage: node scripts/assert-refine-flags.mjs <0|1> <false|true>");
+  throw new Error(
+    "usage: node scripts/assert-refine-flags.mjs <0|1> <false|true> [templatePath]",
+  );
 }
 
+// 환경마다 스택 이름과 출력 디렉터리가 다르다(cdk.out/StandinApp,
+// cdk.out-staging/StandinStagingApp). 기본값이 프로덕션이라 기존 호출은 그대로 동작한다.
 const template = JSON.parse(
-  await readFile(new URL("../cdk.out/StandinApp.template.json", import.meta.url), "utf8"),
+  await readFile(new URL(`../${templatePath}`, import.meta.url), "utf8"),
 );
 
 const environments = Object.values(template.Resources)
@@ -64,4 +72,7 @@ if (
   );
 }
 
-console.log(`refine flags verified: inference=${expectedInference}, bff=${expectedBff}`);
+console.log(
+  `refine flags verified in ${templatePath}: ` +
+    `inference=${expectedInference}, bff=${expectedBff}`,
+);

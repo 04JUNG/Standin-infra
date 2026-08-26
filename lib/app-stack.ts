@@ -18,10 +18,32 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 
 export interface AppStackProps extends StackProps {
+  /**
+   * 배포 대상 환경. 물리 이름(시크릿·KMS 별칭·IAM 정책·Cloud Map)의 유일성을 만든다.
+   *
+   * `appEnv`와 다른 축이다 — staging도 `appEnv: "production"`으로 돌려야 실모델·실
+   * 라이브러리 경로를 검증할 수 있고, 그러면 appEnv만으로는 두 환경을 구분할 수 없다.
+   */
+  envName: "prod" | "staging";
   bffRepo: ecr.Repository;
   inferenceRepo: ecr.Repository;
   /** BFF의 공개 HTTPS 기준 URL(OAuth 콜백·이메일 인증 링크). */
   publicUrl: string;
+  /**
+   * CORS 허용 Origin 목록(콤마 구분).
+   *
+   * 환경마다 다르다 — staging BFF가 프로덕션 가입 페이지를 허용하면, 테스터가 어느
+   * 백엔드에 계정을 만들었는지 알 수 없게 된다.
+   */
+  corsOrigins: string;
+  /**
+   * OAuth 성공 후 데스크톱 앱으로 되돌아가는 딥링크.
+   *
+   * ⚠ 스킴은 **설치 시점에 OS에 등록**된다. 두 환경이 같은 스킴을 쓰면 어느 앱이 링크를
+   *   받을지 OS가 정하고(Windows는 마지막 등록이 이긴다), staging 로그인의 교환 코드가
+   *   프로덕션 앱으로 넘어간다. 그래서 환경마다 스킴을 다르게 둔다.
+   */
+  oauthSuccessRedirect: string;
   /** ALB HTTPS 리스너에 연결할, 같은 리전의 발급 완료된 ACM 인증서 ARN. */
   certificateArn: string;
   /**
@@ -37,6 +59,15 @@ export interface AppStackProps extends StackProps {
   refineFeatureEnabled: boolean;
   /** 기본 inline. 앱·queue 검증 뒤 sqs로 전환하면 worker desiredCount도 1이 된다. */
   jobExecutionMode: "inline" | "sqs";
+  /**
+   * 서비스별 태스크 수. 프로덕션은 1, staging은 기본 0이다.
+   *
+   * staging 스택을 지우지 않고 태스크만 0으로 두면 유휴 비용이 ALB+RDS만 남는다.
+   * 도메인·인증서·시크릿을 매번 다시 세팅하지 않아도 되는 것이 destroy 대비 이점이다.
+   */
+  serviceDesiredCount: number;
+  /** 앱의 QUOTA_GLOBAL_DAILY. staging은 Gemini 비용 때문에 낮게 잡는다. */
+  quotaGlobalDaily: string;
   /**
    * 로그 출하 경로(계획 5단계). 기본 cloudwatch.
    * firelens로 바꾸면 fluent-bit 사이드카가 외부 수집기로 보내고 CloudWatch에는 남지 않는다.
@@ -72,6 +103,33 @@ export class AppStack extends Stack {
     super(scope, id, props);
 
     const isProd = props.appEnv === "production";
+    const isPrimary = props.envName === "prod";
+
+    /**
+     * 시크릿 이름. 프로덕션은 **이미 배포된 이름 그대로** 두고 staging에만 경로를 하나 판다.
+     *
+     * ⚠ 이름을 바꾸면 CloudFormation이 시크릿을 교체한다 — JWT 서명 키가 새로 생겨
+     *   모든 세션이 끊기고, 콘솔에서 채워 둔 OAuth·SMTP·Discord 값이 빈 껍데기로 돌아간다.
+     *   그래서 접두사는 새로 만드는 환경에만 붙인다.
+     */
+    const secretName = (suffix: string) =>
+      isPrimary ? `standin/${suffix}` : `standin/${props.envName}/${suffix}`;
+
+    /**
+     * 이미 `appEnv`를 이름에 넣어 배포된 리소스들의 환경 구분자.
+     *
+     * staging도 `appEnv=production`으로 돌기 때문에 appEnv만으로는 두 환경이 같은 이름을
+     * 만든다. 프로덕션은 배포된 값(`production`)을 유지하고 staging만 `staging`을 쓴다.
+     */
+    const envSegment = isPrimary ? props.appEnv : props.envName;
+
+    /**
+     * staging 데이터는 버려도 되는 것이다 — 스택을 지우면 같이 지운다.
+     *
+     * 프로덕션에서 RETAIN을 유지하는 이유는 사고 복구지만, staging에 그대로 두면
+     * 지운 스택이 KMS 별칭과 버킷을 남겨 다음 재생성이 이름 충돌로 실패한다.
+     */
+    const dataRemovalPolicy = isPrimary ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
     // ── 네트워크 ─────────────────────────────────────────────────
     const vpc = new ec2.Vpc(this, "Vpc", {
@@ -121,16 +179,18 @@ export class AppStack extends Stack {
       securityGroups: [dbSg],
       databaseName: "standin",
       credentials: rds.Credentials.fromGeneratedSecret("standin", {
-        secretName: "standin/db",
+        secretName: secretName("db"),
       }),
       allocatedStorage: 20,
       maxAllocatedStorage: 100, // 오토스케일 상한
       multiAz: false, // 초기엔 단일 AZ. 가용성이 필요해지면 켠다(비용 2배)
       publiclyAccessible: false,
-      backupRetention: Duration.days(7),
-      deleteAutomatedBackups: false,
+      // staging 데이터는 언제든 다시 만들 수 있다 — 백업 보관에 돈을 쓰지 않는다.
+      backupRetention: Duration.days(isPrimary ? 7 : 1),
+      deleteAutomatedBackups: !isPrimary,
       // ⚠ 초기 단계 설정이다. 실사용자가 생기면 RETAIN + deletionProtection으로 바꿀 것.
-      removalPolicy: RemovalPolicy.SNAPSHOT,
+      //   staging은 스냅샷도 남기지 않는다(지운 뒤 다시 만들 때 스냅샷 요금만 쌓인다).
+      removalPolicy: isPrimary ? RemovalPolicy.SNAPSHOT : RemovalPolicy.DESTROY,
       deletionProtection: false,
       storageEncrypted: true,
       enablePerformanceInsights: false, // t4g.micro는 미지원
@@ -139,11 +199,17 @@ export class AppStack extends Stack {
     
   
     // ── 서비스 ───────────────────────────────────────────────────
+    // Cloud Map 네임스페이스 이름은 계정+리전에서 유일해야 한다(VPC가 달라도 겹치면
+    // CreateNamespace가 실패한다). 환경마다 다른 이름을 쓰고, 내부 주소는 이 값에서
+    // 만들어 쓴다 — 두 군데 하드코딩해 두면 반드시 한쪽만 고쳐진다.
+    const namespaceName = isPrimary ? "standin.local" : `standin-${props.envName}.local`;
+    const inferenceBaseUrl = `http://inference.${namespaceName}:8000`;
+
     const cluster = new ecs.Cluster(this, "Cluster", {
       vpc: vpc,
       containerInsightsV2: ecs.ContainerInsights.ENABLED,
       defaultCloudMapNamespace: {
-        name: "standin.local",
+        name: namespaceName,
         type: servicediscovery.NamespaceType.DNS_PRIVATE,
       },
     });
@@ -168,9 +234,9 @@ export class AppStack extends Stack {
     // 동의 철회 시 installations/ prefix 삭제 스윕이 **추가 설정 없이 그대로 적용된다**.
     // 쓰는 쪽은 BFF뿐이므로 inference task role에는 S3 쓰기 권한을 주지 않는다.
     const betaDataKey = new kms.Key(this, "BetaDataKey", {
-      alias: `alias/standin-${props.appEnv}-beta-data`,
+      alias: `alias/standin-${envSegment}-beta-data`,
       enableKeyRotation: true,
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: dataRemovalPolicy,
     });
     const betaData = new s3.Bucket(this, "BetaDataBucket", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -180,12 +246,12 @@ export class AppStack extends Stack {
       versioned: false,
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
       lifecycleRules: [{ id: "ExpireBetaInputs", expiration: Duration.days(90) }],
-      removalPolicy: RemovalPolicy.RETAIN,
-      autoDeleteObjects: false,
+      removalPolicy: dataRemovalPolicy,
+      autoDeleteObjects: !isPrimary,
     });
 
     const jwtSecret = new secretsmanager.Secret(this, "JwtSecret", {
-      secretName: "standin/jwt",
+      secretName: secretName("jwt"),
       description: "BFF JWT 서명 키",
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
@@ -198,7 +264,7 @@ export class AppStack extends Stack {
     //   키는 반드시 존재해야 한다. 앱은 빈 키를 PROVIDER_UNAVAILABLE로 처리하므로
     //   빈 문자열로 두어도 기동에는 문제가 없다.
     const oauthSecret = new secretsmanager.Secret(this, "OAuthSecret", {
-      secretName: "standin/oauth",
+      secretName: secretName("oauth"),
       description: "Social login client credentials. Fill values in the console after deploy.",
       secretObjectValue: {
         googleClientId: SecretValue.unsafePlainText(""),
@@ -214,7 +280,7 @@ export class AppStack extends Stack {
     // 2단계(production)에서 값을 채우지 않으면 추론이 조용히 mock으로 폴백하는데,
     // 추론 서버의 런타임 가드가 그걸 잡아 기동을 막는다.
     const vlmSecret = new secretsmanager.Secret(this, "VlmSecret", {
-      secretName: "standin/vlm",
+      secretName: secretName("vlm"),
       description: "VLM provider API keys. Fill values in the console before switching to production.",
       secretObjectValue: {
         geminiApiKey: SecretValue.unsafePlainText(""),
@@ -222,7 +288,7 @@ export class AppStack extends Stack {
       },
     });
     const betaReviewSecret = new secretsmanager.Secret(this, "BetaReviewSecret", {
-      secretName: `standin/${props.appEnv}/beta-review-token`,
+      secretName: `standin/${envSegment}/beta-review-token`,
       description: "Shared token for the restricted closed-beta quality review API",
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
@@ -234,7 +300,7 @@ export class AppStack extends Stack {
     // ⚠ 이 값을 바꾸면 모든 IP 버킷 키가 바뀌어 진행 중인 카운터가 리셋된다
     //   (창이 최대 1시간이라 실무 영향은 작다).
     const ipHashSalt = new secretsmanager.Secret(this, "IpHashSalt", {
-      secretName: `standin/${props.appEnv}/ip-hash-salt`,
+      secretName: `standin/${envSegment}/ip-hash-salt`,
       description: "Salt for hashing client IPs into rate-limit buckets",
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
@@ -242,7 +308,7 @@ export class AppStack extends Stack {
     // 이메일 인증용 SMTP 설정. 공급자(Gmail·SES SMTP 등)는 배포 후 콘솔에서 채운다.
     // ECS가 JSON 키를 시작 시 해석하므로 값이 비어 있어도 모든 키를 미리 만든다.
     const smtpSecret = new secretsmanager.Secret(this, "SmtpSecret", {
-      secretName: "standin/smtp",
+      secretName: secretName("smtp"),
       description: "SMTP credentials used by the BFF for email verification.",
       secretObjectValue: {
         host: SecretValue.unsafePlainText(""),
@@ -264,7 +330,7 @@ export class AppStack extends Stack {
      *   값이 비면 두 서버의 알림기가 조용히 no-op으로 동작하므로 기동에는 문제가 없다.
      */
     const discordSecret = new secretsmanager.Secret(this, "DiscordSecret", {
-      secretName: "standin/discord",
+      secretName: secretName("discord"),
       description: "Discord webhooks for P1/P2/P3 alerts. Fill values in the console after deploy.",
       secretObjectValue: {
         webhookAlert: SecretValue.unsafePlainText(""), // P1 — 사람을 깨운다
@@ -305,7 +371,7 @@ export class AppStack extends Stack {
     const logShippingSecret =
       props.logShipping === "firelens"
         ? new secretsmanager.Secret(this, "LogShippingSecret", {
-            secretName: "standin/log-shipping",
+            secretName: secretName("log-shipping"),
             description: "External log collector credentials (Loki/Grafana Cloud)",
             secretObjectValue: {
               host: SecretValue.unsafePlainText(""), // 예: logs-prod-013.grafana.net
@@ -451,13 +517,13 @@ export class AppStack extends Stack {
     const inferenceService = new ecs.FargateService(this, "InferenceService", {
       cluster,
       taskDefinition: inferenceTask,
-      desiredCount: 1,
+      desiredCount: props.serviceDesiredCount,
       securityGroups: [inferenceSg],
       // NAT가 없으므로 퍼블릭 서브넷 + 퍼블릭 IP로 외부(VLM API·S3)에 나간다.
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       assignPublicIp: true,
       cloudMapOptions: {
-        name: "inference", // → inference.standin.local
+        name: "inference", // → inference.<namespace> (INFERENCE_BASE_URL와 같은 이름)
         dnsRecordType: servicediscovery.DnsRecordType.A,
         dnsTtl: Duration.seconds(10),
       },
@@ -492,7 +558,9 @@ export class AppStack extends Stack {
     // 복사하지 않는다. 운영자는 버전 관리되는 S3 경로에 번들을 올리고, 지정된 추론
     // 서비스만 새 태스크로 교체한다. 태스크는 자신의 읽기 전용 역할로 번들을 받는다.
     const inferenceOperatorPolicy = new iam.ManagedPolicy(this, "InferenceOperatorPolicy", {
-      managedPolicyName: "standin-inference-operator",
+      managedPolicyName: isPrimary
+        ? "standin-inference-operator"
+        : `standin-${props.envName}-inference-operator`,
       description: "Upload Standin pose libraries and restart only the inference ECS service",
       statements: [
         new iam.PolicyStatement({
@@ -594,7 +662,7 @@ export class AppStack extends Stack {
       // (월 10만원 − AWS 고정비 5만) ÷ 건당 4원 ≈ 12,500회/월 ≈ 일 416회 → 400.
       // ⚠ 입력값 둘(AWS 고정비 실측·Gemini 건당 단가)이 아직 측정 전이라 잠정치다.
       //   단가가 4원을 크게 넘으면 이 값이 아니라 QUOTA_INSTALLATION_WEEKLY를 먼저 낮춘다.
-      QUOTA_GLOBAL_DAILY: "400",
+      QUOTA_GLOBAL_DAILY: props.quotaGlobalDaily,
     };
 
     const bffTask = new ecs.FargateTaskDefinition(this, "BffTask", {
@@ -616,11 +684,10 @@ export class AppStack extends Stack {
         NODE_ENV: "production",
         PUBLIC_URL: props.publicUrl,
         // Vercel 가입 페이지가 register/resend-verification API를 직접 호출한다.
-        CORS_ORIGINS:
-          "http://localhost:1420,http://tauri.localhost,tauri://localhost,http://localhost:5173,https://standin-seven.vercel.app",
+        CORS_ORIGINS: props.corsOrigins,
         // OAuth 완료 후 브라우저에서 데스크톱 앱으로 1회용 교환 코드를 전달한다.
-        OAUTH_SUCCESS_REDIRECT: "standin://auth/callback",
-        INFERENCE_BASE_URL: "http://inference.standin.local:8000",
+        OAUTH_SUCCESS_REDIRECT: props.oauthSuccessRedirect,
+        INFERENCE_BASE_URL: inferenceBaseUrl,
         BETA_DATA_BUCKET: betaData.bucketName,
         JOB_EXECUTION_MODE: props.jobExecutionMode,
         ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
@@ -692,7 +759,7 @@ export class AppStack extends Stack {
     const bffService = new ecs.FargateService(this, "BffService", {
       cluster,
       taskDefinition: bffTask,
-      desiredCount: 1,
+      desiredCount: props.serviceDesiredCount,
       securityGroups: [bffSg],
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       assignPublicIp: true,
@@ -719,7 +786,7 @@ export class AppStack extends Stack {
       logging: containerLogging(workerTask, "analysis-worker"),
       environment: {
         NODE_ENV: "production",
-        INFERENCE_BASE_URL: "http://inference.standin.local:8000",
+        INFERENCE_BASE_URL: inferenceBaseUrl,
         BETA_DATA_BUCKET: betaData.bucketName,
         ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
         WORKER_VISIBILITY_SECONDS: "180",
@@ -749,7 +816,7 @@ export class AppStack extends Stack {
     const workerService = new ecs.FargateService(this, "AnalysisWorkerService", {
       cluster,
       taskDefinition: workerTask,
-      desiredCount: props.jobExecutionMode === "sqs" ? 1 : 0,
+      desiredCount: props.jobExecutionMode === "sqs" ? props.serviceDesiredCount : 0,
       securityGroups: [workerSg],
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       assignPublicIp: true,
@@ -913,6 +980,22 @@ export class AppStack extends Stack {
         description: "추론 운영자에게 읽기 권한이 열려 있는 유일한 로그 그룹",
       });
     }
+    new CfnOutput(this, "OauthSuccessRedirect", {
+      value: props.oauthSuccessRedirect,
+      description: "이 환경용 클라이언트 빌드가 등록해야 하는 딥링크 스킴",
+    });
+    new CfnOutput(this, "CorsOrigins", {
+      value: props.corsOrigins,
+      description: "이 환경의 BFF가 허용하는 Origin 목록",
+    });
+    new CfnOutput(this, "EnvName", {
+      value: props.envName,
+      description: "배포 환경(prod | staging). 배포 워크플로가 대상을 확인하는 값",
+    });
+    new CfnOutput(this, "ServiceDesiredCount", {
+      value: String(props.serviceDesiredCount),
+      description: "0이면 스택만 남고 태스크는 떠 있지 않다(staging 유휴 상태)",
+    });
     new CfnOutput(this, "InferenceOperatorPolicyArn", {
       value: inferenceOperatorPolicy.managedPolicyArn,
       description: "IAM Identity Center 팀 권한 세트 또는 기존 역할에 연결할 추론 운영 정책",

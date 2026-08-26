@@ -64,11 +64,35 @@ jobs:
             exit 1
           fi
 
+      # ── 환경 분리 검사 ────────────────────────────────────────
+      #
+      # staging 설정(도메인·인증서)은 cdk.json에서 비어 있을 수 있다. 여기서는 실제
+      # 값이 아니라 **staging 경로가 합성되는지**와 **두 환경의 물리 이름이 겹치지
+      # 않는지**를 본다. 이름 충돌은 합성에서 드러나지 않고 두 번째 배포가 시작된 뒤
+      # CREATE_FAILED로 나오기 때문에, 여기서 걸러야 의미가 있다.
+      - name: Synthesize production
+        run: npm run synth -- --no-lookups -o cdk.out-prod
+
+      - name: Synthesize staging
+        run: npm run synth -- --no-lookups -o cdk.out-staging -c envName=staging -c stagingPublicUrl=https://staging.api.standinpose.com -c stagingCertificateArn=arn:aws:acm:ap-northeast-2:000000000000:certificate/00000000-0000-0000-0000-000000000000
+
+      # staging은 프로덕션 컨텍스트를 그대로 물려받는다 — 갈라지면 여기서 걸린다.
+      - name: Verify staging refine flags mirror production
+        run: node scripts/assert-refine-flags.mjs 1 true cdk.out-staging/StandinStagingApp.template.json
+
+      - name: Verify prod and staging never share a physical name
+        run: node scripts/assert-env-isolation.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
+
+      # `cdk.out`이 아니라 `cdk.out-prod`를 올린다.
+      #
+      # 위 refine 검사들이 `cdk.out`에 연달아 합성하므로, 그 디렉터리에 마지막으로 남는
+      # 것은 프로덕션이 아니라 **refine canary 변형**(refineFeatureEnabled=false)이다.
+      # 아티팩트를 배포 대조용으로 받아 보는 사람에게 그건 배포되지 않을 템플릿이다.
       - name: Upload synthesized templates
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
         uses: actions/upload-artifact@v4
         with:
           name: standin-cdk-${{ github.run_number }}
-          path: cdk.out/*.template.json
+          path: cdk.out-prod/*.template.json
           if-no-files-found: error
           retention-days: 14

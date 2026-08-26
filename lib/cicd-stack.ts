@@ -6,6 +6,22 @@ import type { Construct } from "constructs";
 export interface CicdStackProps extends StackProps {
   /** GitHub API가 반환한 저장소별 OIDC subject prefix. */
   githubOidcSubjectPrefixes: string[];
+  /**
+   * 이 역할을 assume할 수 있는 GitHub environment 이름들.
+   *
+   * 신뢰 범위를 좁게 유지하는 두 번째 축이다 — 저장소가 맞아도 보호된 environment에
+   * 붙은 job이 아니면 assume할 수 없다. 각 environment의 배포 가능 브랜치는 GitHub
+   * 쪽에서 제한한다(beta=main, staging=develop).
+   */
+  githubDeployEnvironments: string[];
+  /**
+   * PassRole을 허용할 앱 스택 이름 접두사들.
+   *
+   * ECS 태스크 역할 이름은 `<스택이름>-<논리ID><해시>` 꼴이라 스택마다 다르다.
+   * 환경을 추가하면 여기에 그 스택 이름을 넣어야 배포 워크플로가 태스크 정의를
+   * 다시 등록할 수 있다.
+   */
+  appStackPrefixes: string[];
   bffRepo: ecr.Repository;
   inferenceRepo: ecr.Repository;
 }
@@ -28,10 +44,11 @@ export class CicdStack extends Stack {
       clientIds: ["sts.amazonaws.com"],
     });
 
-    // Only jobs attached to the protected GitHub `beta` environment may assume
-    // this role. The environment itself only permits deployments from `main`.
-    const subjects = props.githubOidcSubjectPrefixes.map(
-      (prefix) => `${prefix}:environment:beta`,
+    // Only jobs attached to a protected GitHub environment may assume this role.
+    // Each environment restricts which branches may deploy through it
+    // (`beta` from `main`, `staging` from `develop`).
+    const subjects = props.githubOidcSubjectPrefixes.flatMap((prefix) =>
+      props.githubDeployEnvironments.map((environment) => `${prefix}:environment:${environment}`),
     );
 
     const role = new iam.Role(this, "GithubDeployRole", {
@@ -74,10 +91,12 @@ export class CicdStack extends Stack {
     role.addToPolicy(
       new iam.PolicyStatement({
         actions: ["iam:PassRole"],
-        resources: [
-          `arn:${this.partition}:iam::${this.account}:role/StandinApp-*TaskExecutionRole*`,
-          `arn:${this.partition}:iam::${this.account}:role/StandinApp-*TaskTaskRole*`,
-        ],
+        // `StandinApp-*`는 `StandinStagingApp-...`에 걸리지 않는다(접두사가 리터럴이다).
+        // 환경마다 명시적으로 넣어야 해당 스택의 태스크 역할을 넘길 수 있다.
+        resources: props.appStackPrefixes.flatMap((prefix) => [
+          `arn:${this.partition}:iam::${this.account}:role/${prefix}-*TaskExecutionRole*`,
+          `arn:${this.partition}:iam::${this.account}:role/${prefix}-*TaskTaskRole*`,
+        ]),
         conditions: { StringEquals: { "iam:PassedToService": "ecs-tasks.amazonaws.com" } },
       }),
     );
