@@ -453,7 +453,24 @@ export class AppStack extends Stack {
         // production에서 mock이면 추론 서버가 기동을 거부한다(조용한 폴백도 잡는다).
         VLM_PROVIDER: isProd ? "gemini" : "mock",
         // 기본 모델 변경이나 지원 종료에 영향받지 않도록 배포 모델을 명시한다.
-        GEMINI_MODEL: "gemini-flash-latest",
+        //
+        // ⚠ 2026-08-29 장애: `gemini-flash-latest`는 **롤링 별칭**이라 배포 없이도
+        //   가리키는 모델이 바뀐다. 그 모델이 무너지자 프로덕션 분석이 통째로 죽었다
+        //   (기동 후 gemini_request 27건 = 분석 9건 x 3시도가 전부 503, 성공 0건,
+        //   17:22~21:56 KST 4시간 반). 유료 키로 바꾼 뒤에도 같았다 — 키 문제가 아니다.
+        //
+        //   같은 키·같은 순간에 모델만 바꿔 재보니(Standin-server의 scripts/vlm_probe.py):
+        //     gemini-flash-latest      0/6  504 x5 + timeout x1, 전부 ~29초
+        //     gemini-3.5-flash         3/3  p50 4.1초
+        //     gemini-flash-lite-latest 3/3  p50 1.6초
+        //   교체 후 프로덕션 /analyze가 75.6초 503 → 8.97초 200으로 돌아왔다.
+        //
+        // ⚠ 2.5 계열(gemini-2.5-flash, gemini-2.5-flash-lite)은 이 프로젝트 키에서
+        //   404다("no longer available to new users"). models.list에는 보이지만
+        //   generateContent에서 거부된다. 404는 추론 서버가 "우리 잘못"으로 분류해
+        //   폴백도 못 타고 500 + P2 알림이 된다.
+        //   **모델을 바꿀 때는 반드시 실제 키로 먼저 확인할 것** — 별칭 금지, 실측 필수.
+        GEMINI_MODEL: "gemini-3.5-flash",
         // ⚠ 2026-08-19 장애: 20000(20초)이 짧아 프로덕션 분석이 전부 이 데드라인에
         //   잘렸다(관측된 Gemini 호출 3건 전부 실패, 성공 0건, 실패 중 2건이 20.0s·20.3s).
         //   이 값이 생기기 전에는 상한이 없어 느린 호출도 결국 끝났다 — 즉 이 값이
