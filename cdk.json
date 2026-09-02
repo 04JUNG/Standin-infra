@@ -43,10 +43,10 @@
     "quotaGlobalDaily": "400",
 
     "//staging": "── 테스트 환경. 아래 두 값이 비어 있으면 -c envName=staging 배포가 막힌다. ──",
-    "//stagingPublicUrl": "staging BFF 공개 도메인. 프로덕션과 반드시 달라야 한다(OAuth 콜백이 갈린다).",
-    "stagingPublicUrl": "",
+    "//stagingPublicUrl": "staging BFF 공개 도메인. 프로덕션과 반드시 달라야 한다(OAuth 콜백이 갈린다). 점이 하나뿐인 이름을 쓴다 — 가비아 DNS는 호스트 필드에 점을 하나까지만 받아서, staging.api.… 형태는 ACM 검증 레코드를 등록할 수 없다.",
+    "stagingPublicUrl": "https://api-staging.standinpose.com",
     "//stagingCertificateArn": "stagingPublicUrl 호스트용 서울 리전 ACM 인증서",
-    "stagingCertificateArn": "",
+    "stagingCertificateArn": "arn:aws:acm:ap-northeast-2:136889124221:certificate/4de479bd-421f-41e7-afbd-67dee8b76480",
     "//stagingActive": "테스트할 때만 true. false면 Fargate 태스크 0개로 두고 ALB·RDS만 유지한다.",
     "stagingActive": false,
     "//stagingQuotaGlobalDaily": "staging도 실제 Gemini를 호출한다 — 상한을 낮게 둬 테스트가 예산을 태우지 않게 한다.",

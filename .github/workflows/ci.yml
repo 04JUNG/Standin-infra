@@ -74,7 +74,7 @@ jobs:
         run: npm run synth -- --no-lookups -o cdk.out-prod
 
       - name: Synthesize staging
-        run: npm run synth -- --no-lookups -o cdk.out-staging -c envName=staging -c stagingPublicUrl=https://staging.api.standinpose.com -c stagingCertificateArn=arn:aws:acm:ap-northeast-2:000000000000:certificate/00000000-0000-0000-0000-000000000000
+        run: npm run synth -- --no-lookups -o cdk.out-staging -c envName=staging -c stagingPublicUrl=https://api-staging.standinpose.com -c stagingCertificateArn=arn:aws:acm:ap-northeast-2:000000000000:certificate/00000000-0000-0000-0000-000000000000
 
       # staging은 프로덕션 컨텍스트를 그대로 물려받는다 — 갈라지면 여기서 걸린다.
       - name: Verify staging refine flags mirror production
