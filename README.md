@@ -244,7 +244,7 @@ npx cdk deploy StandinStagingApp -c envName=staging -c stagingActive=true
 
 | | 프로덕션 빌드 | staging 빌드 |
 |---|---|---|
-| API 기준 URL | `https://api.standinpose.com` | `https://staging.api.standinpose.com` |
+| API 기준 URL | `https://api.standinpose.com` | `https://api-staging.standinpose.com` |
 | 딥링크 스킴 | `standin://auth/callback` | `standin-staging://auth/callback` |
 | bundle id | 현행 | 별도 id (동시 설치 가능해야 한다) |
 
@@ -268,7 +268,7 @@ Preview 도메인은 배포마다 바뀌어 CORS에 넣을 수 없으므로 **�
 
 ### 처음 한 번만 하는 준비
 
-1. `staging.api.standinpose.com`(또는 원하는 호스트)용 **서울 리전 ACM 인증서**를 발급하고 가비아에 검증 CNAME을 넣는다.
+1. `api-staging.standinpose.com`용 **서울 리전 ACM 인증서**를 발급하고 가비아에 검증 CNAME을 넣는다. ⚠ 호스트 이름에 점을 하나만 쓴다 — 가비아 DNS 관리는 호스트 필드에 점을 하나까지만 받는다. `staging.api.standinpose.com`을 쓰면 검증 레코드가 `_hash.staging.api`(점 2개)라 등록 자체가 안 된다. `api-staging`은 `_hash.api-staging`(점 1개)이라 들어간다.
 2. `cdk.json`의 `stagingPublicUrl`·`stagingCertificateArn`을 채운다. 둘 중 하나라도 비어 있으면 `-c envName=staging` 배포가 합성 단계에서 막힌다.
 3. `npx cdk deploy StandinStagingApp -c envName=staging`
 4. 스택 출력의 `AlbUrl`을 가비아에 CNAME으로 연결한다.
