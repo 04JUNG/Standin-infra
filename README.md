@@ -161,6 +161,7 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 | `refineFeatureEnabled` | `true` | `false`면 클라이언트에서 refine이 사라진다 |
 | `envName` | `prod` | `staging`이면 `StandinStagingApp`을 만든다. **파일에 `staging`을 커밋해 두면 다음 사람의 무인자 배포가 프로덕션이 아니라 staging으로 나간다** |
 | `stagingActive` | `false` | `true`면 staging Fargate 태스크가 계속 떠 있어 월 ~$51이 더 나간다 |
+| `imageTag` | `latest` | staging과 같은 값이면 `cdk deploy`가 엉뚱한 환경의 이미지를 끌어온다 |
 | `corsOrigins` | 아래 CORS 항목 참고 | 빠진 Origin은 가입 페이지에서 CORS 오류가 난다 |
 | `oauthSuccessRedirect` | `standin://auth/callback` | 클라이언트가 등록한 스킴과 다르면 OAuth 로그인이 앱으로 돌아오지 못한다 |
 | `quotaGlobalDaily` | `"400"` | 앱의 전체 일일 상한. 오픈베타_계획 §4-2 산식에서 나온 값이다 |
@@ -204,11 +205,35 @@ CloudFormation은 **스택 이름으로 리소스를 추적한다.** 대칭을 �
 | 내부 DNS | `standin.local` | `standin-staging.local` |
 | 운영 정책 | `standin-inference-operator` | `standin-staging-inference-operator` |
 | ECR 저장소 | `standin/bff`, `standin/inference` — **공유** | |
+| 이미지 태그 | `:latest` (main 빌드가 옮긴다) | `:develop` (develop 빌드가 옮긴다) |
 | OIDC 배포 역할 | `standin-github-deploy` — **공유** (GitHub environment로 구분) | |
 
 이름 충돌은 합성에서 드러나지 않고 **두 번째 배포가 시작된 뒤** `CREATE_FAILED`로 나온다.
 그래서 `scripts/assert-env-isolation.mjs`가 CI에서 두 템플릿의 고정 이름을 비교한다.
 새 리소스에 이름을 직접 지정할 때는 이 검사가 통과하는지 확인한다.
+
+### ⚠ 움직이는 태그는 환경마다 나눈다
+
+저장소는 공유하지만 **`latest`를 두 환경이 같이 보면 안 된다.**
+
+배포 자체는 GitHub Actions가 커밋 SHA로 고정한 태스크 정의 리비전으로 한다. 그런데
+`cdk deploy`가 서비스를 건드리면 CloudFormation이 **자기가 만든 리비전으로 되돌리고**,
+그 리비전은 `imageTag` 컨텍스트의 움직이는 태그를 참조한다. 두 환경이 같은 태그를 보면
+그 되돌림이 엉뚱한 환경의 이미지를 끌어온다 — staging에 프로덕션 이미지가 올라가거나,
+develop 코드가 프로덕션에 올라간다.
+
+실제로 겪었다. staging 자동 배포가 붙은 날, `develop` 빌드가 `latest`를 옮겼고
+프로덕션 태스크 정의가 그 `latest`를 참조하고 있었다. 프로덕션은 SHA로 고정된 리비전을
+돌고 있어 사고가 나지는 않았지만, 그 시점에 누가 `cdk deploy StandinApp`을 돌렸다면
+리뷰되지 않은 develop 코드가 프로덕션에 올라갔다.
+
+```
+main 빌드     → :sha + :latest     프로덕션 태스크 정의 → :latest
+develop 빌드  → :sha + :develop    staging 태스크 정의  → :develop
+```
+
+앱 저장소의 `deploy.yml`이 브랜치별로 움직이는 태그를 나눠 민다. SHA 태그는 항상
+푸시하고, 배포는 그쪽을 쓴다.
 
 ### staging도 `appEnv=production`으로 돌린다
 

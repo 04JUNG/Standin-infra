@@ -137,6 +137,25 @@ const quotaGlobalDaily = String(
 );
 
 /**
+ * 태스크 정의가 참조할 ECR 이미지 태그.
+ *
+ * 저장소는 두 환경이 공유하지만 **움직이는 태그는 나눠야 한다.** 배포 자체는 GitHub
+ * Actions가 커밋 SHA로 고정하지만, `cdk deploy`가 서비스를 건드리면 CloudFormation이
+ * 이 태그를 쓰는 리비전으로 되돌린다. 두 환경이 같은 태그를 보면 그 되돌림이 엉뚱한
+ * 환경의 이미지를 끌어온다.
+ *
+ *   main 빌드    → :sha + :latest    → 프로덕션이 :latest를 본다
+ *   develop 빌드 → :sha + :develop   → staging이 :develop을 본다
+ */
+const imageTag = String(
+  app.node.tryGetContext(isStaging ? "stagingImageTag" : "imageTag") ??
+    (isStaging ? "develop" : "latest"),
+);
+if (!imageTag) {
+  throw new Error("imageTag must not be empty");
+}
+
+/**
  * 로그 출하 경로(계획 5단계).
  *   cloudwatch — 기본. ECS awslogs 드라이버로 CloudWatch Logs에 남긴다.
  *   firelens   — fluent-bit 사이드카로 외부 수집기(Loki/Grafana Cloud)에 보낸다.
@@ -194,6 +213,7 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   jobExecutionMode,
   serviceDesiredCount,
   quotaGlobalDaily,
+  imageTag,
   logShipping,
   logRetentionDays,
 });

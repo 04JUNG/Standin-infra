@@ -69,6 +69,17 @@ export interface AppStackProps extends StackProps {
   /** 앱의 QUOTA_GLOBAL_DAILY. staging은 Gemini 비용 때문에 낮게 잡는다. */
   quotaGlobalDaily: string;
   /**
+   * 태스크 정의가 참조할 ECR 이미지 태그. 환경마다 **달라야 한다**.
+   *
+   * 배포는 GitHub Actions가 커밋 SHA로 고정한 리비전으로 하지만, `cdk deploy`가
+   * 서비스를 건드리면 CloudFormation이 이 태그를 쓰는 리비전으로 되돌린다. 두 환경이
+   * 같은 움직이는 태그를 보면 그 되돌림이 **엉뚱한 환경의 이미지를 끌어온다** —
+   * staging에 프로덕션 이미지가 올라가거나, 그 반대가 된다.
+   *
+   * main 빌드가 `latest`를, develop 빌드가 `develop`을 옮긴다(앱 저장소 deploy.yml).
+   */
+  imageTag: string;
+  /**
    * 로그 출하 경로(계획 5단계). 기본 cloudwatch.
    * firelens로 바꾸면 fluent-bit 사이드카가 외부 수집기로 보내고 CloudWatch에는 남지 않는다.
    */
@@ -445,7 +456,7 @@ export class AppStack extends Stack {
     const inferenceLogging = containerLogging(inferenceTask, "inference");
 
     inferenceTask.addContainer("inference", {
-      image: ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, "latest"),
+      image: ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, props.imageTag),
       logging: inferenceLogging,
       environment: {
         APP_ENV: props.appEnv,
@@ -694,7 +705,7 @@ export class AppStack extends Stack {
     betaData.grantReadWrite(bffTask.taskRole);
 
     bffTask.addContainer("bff", {
-      image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, "latest"),
+      image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag),
       logging: containerLogging(bffTask, "bff"),
       environment: {
         PORT: "8080",
@@ -797,7 +808,7 @@ export class AppStack extends Stack {
       },
     });
     workerTask.addContainer("analysis-worker", {
-      image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, "latest"),
+      image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag),
       command: ["node", "dist/worker.js"],
       stopTimeout: Duration.seconds(120),
       logging: containerLogging(workerTask, "analysis-worker"),
@@ -1004,6 +1015,10 @@ export class AppStack extends Stack {
     new CfnOutput(this, "CorsOrigins", {
       value: props.corsOrigins,
       description: "이 환경의 BFF가 허용하는 Origin 목록",
+    });
+    new CfnOutput(this, "ImageTag", {
+      value: props.imageTag,
+      description: "cdk deploy가 서비스를 되돌릴 때 끌어오는 이미지 태그",
     });
     new CfnOutput(this, "EnvName", {
       value: props.envName,
