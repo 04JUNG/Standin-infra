@@ -41,6 +41,8 @@
     "envName": "prod",
     "//quotaGlobalDaily": "프로덕션 전체 일일 상한. 앱의 QUOTA_GLOBAL_DAILY로 들어간다.",
     "quotaGlobalDaily": "400",
+    "//imageTag": "프로덕션 태스크 정의가 참조하는 ECR 태그. main 빌드만 이 태그를 옮긴다. staging과 같은 값을 쓰면 cdk deploy가 엉뚱한 환경의 이미지를 끌어온다.",
+    "imageTag": "latest",
 
     "//staging": "── 테스트 환경. 아래 두 값이 비어 있으면 -c envName=staging 배포가 막힌다. ──",
     "//stagingPublicUrl": "staging BFF 공개 도메인. 프로덕션과 반드시 달라야 한다(OAuth 콜백이 갈린다). 점이 하나뿐인 이름을 쓴다 — 가비아 DNS는 호스트 필드에 점을 하나까지만 받아서, staging.api.… 형태는 ACM 검증 레코드를 등록할 수 없다.",
@@ -49,6 +51,8 @@
     "stagingCertificateArn": "arn:aws:acm:ap-northeast-2:136889124221:certificate/4de479bd-421f-41e7-afbd-67dee8b76480",
     "//stagingActive": "테스트할 때만 true. false면 Fargate 태스크 0개로 두고 ALB·RDS만 유지한다.",
     "stagingActive": false,
+    "//stagingImageTag": "staging 태스크 정의가 참조하는 ECR 태그. develop 빌드가 이 태그를 옮긴다.",
+    "stagingImageTag": "develop",
     "//stagingQuotaGlobalDaily": "staging도 실제 Gemini를 호출한다 — 상한을 낮게 둬 테스트가 예산을 태우지 않게 한다.",
     "stagingQuotaGlobalDaily": "50",
     "//stagingCorsOrigins": "프로덕션 가입 페이지(standin-seven.vercel.app)를 넣지 않는다. staging용 Vercel 브랜치 고정 도메인을 여기 추가한다.",
