@@ -24,6 +24,14 @@ export interface CicdStackProps extends StackProps {
   appStackPrefixes: string[];
   bffRepo: ecr.Repository;
   inferenceRepo: ecr.Repository;
+  /**
+   * FBX converter 저장소.
+   *
+   * converter-deploy.yml은 `CONVERTER_AWS_DEPLOY_ROLE`이라는 **별도 변수**로 역할을
+   * 받는다. 그 변수에 이 역할의 ARN을 넣으면 여기서 준 권한으로 배포된다. 경계를 정말
+   * 분리하고 싶으면 별도 역할을 만들어 그 변수만 바꾸면 되고, 앱 저장소 쪽은 영향이 없다.
+   */
+  converterRepo: ecr.Repository;
 }
 
 /**
@@ -71,6 +79,7 @@ export class CicdStack extends Stack {
     );
     props.bffRepo.grantPullPush(role);
     props.inferenceRepo.grantPullPush(role);
+    props.converterRepo.grantPullPush(role);
 
     // ECS: 새 이미지로 서비스를 다시 배포한다.
     role.addToPolicy(

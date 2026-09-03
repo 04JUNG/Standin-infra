@@ -14,7 +14,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 
 | 스택 | 내용 | 왜 분리했나 |
 |---|---|---|
-| `StandinRegistry` | ECR 저장소 2개 | 이미지는 앱보다 오래 산다. 앱 스택을 지워도 롤백 대상이 남아야 한다 |
+| `StandinRegistry` | ECR 저장소 3개(bff·inference·converter) | 이미지는 앱보다 오래 산다. 앱 스택을 지워도 롤백 대상이 남아야 한다 |
 | `StandinCicd` | GitHub OIDC 공급자 + 배포 역할 | 앱 스택보다 먼저 있어야 CI가 이미지를 밀어 넣을 수 있다 |
 | `StandinApp` | VPC·보안그룹·RDS·ECS·ALB·S3·시크릿 (프로덕션) | 아래 참고 |
 | `StandinStagingApp` | 같은 구성의 테스트 환경 | 프로덕션에 바로 배포하지 않기 위해. 「[테스트 환경(staging)](#테스트-환경staging)」 참고 |
@@ -162,6 +162,8 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 | `envName` | `prod` | `staging`이면 `StandinStagingApp`을 만든다. **파일에 `staging`을 커밋해 두면 다음 사람의 무인자 배포가 프로덕션이 아니라 staging으로 나간다** |
 | `stagingActive` | `false` | `true`면 staging Fargate 태스크가 계속 떠 있어 월 ~$51이 더 나간다 |
 | `imageTag` | `latest` | staging과 같은 값이면 `cdk deploy`가 엉뚱한 환경의 이미지를 끌어온다 |
+| `converterEnabled` | `false` | `true`면 converter 서비스가 생긴다. 캐릭터 아티팩트가 없으면 태스크 교체 루프에 빠진다 |
+| `fbxExportEnabled` | `false` | `true`면 클라이언트에 FBX 저장이 노출된다 |
 | `corsOrigins` | 아래 CORS 항목 참고 | 빠진 Origin은 가입 페이지에서 CORS 오류가 난다 |
 | `oauthSuccessRedirect` | `standin://auth/callback` | 클라이언트가 등록한 스킴과 다르면 OAuth 로그인이 앱으로 돌아오지 못한다 |
 | `quotaGlobalDaily` | `"400"` | 앱의 전체 일일 상한. 오픈베타_계획 §4-2 산식에서 나온 값이다 |
@@ -310,6 +312,63 @@ main 머지    → GitHub env: beta    → StandinApp 에 **같은 SHA** 배포
 ```
 
 ECR을 공유하므로 프로덕션 배포는 새로 빌드하지 않고 staging에서 통과한 태그를 그대로 쓴다.
+
+## FBX converter (선택)
+
+Blender 5.2를 번들한 별도 서비스다. 기본은 꺼져 있다.
+
+| context | 기본 | 역할 |
+|---|---|---|
+| `converterEnabled` | `false` | converter ECS 서비스를 만든다 |
+| `fbxExportEnabled` | `false` | BFF가 클라이언트에 FBX 저장을 노출한다 |
+
+refine과 같은 두 단계다 — 서비스를 띄워 헬스체크가 통과하는지 보고, 그 다음에 노출한다.
+`fbxExportEnabled=true`인데 `converterEnabled=false`면 합성이 실패한다.
+
+### ⚠ 캐릭터 아티팩트가 먼저다
+
+converter의 `/healthz`는 `default_character`를 검사한다. `standin-master-v2.fbx`가 없으면
+**503을 돌려주고 ECS가 태스크를 무한 교체**한다. 그래서 순서가 이렇다:
+
+```bash
+# 1. 캐릭터 업로드 (레지스트리의 sha256과 일치해야 한다)
+aws s3 cp standin-master-v2.fbx s3://<AssetsBucketName>/characters/standin-master-v2.fbx
+
+# 2. 서비스만 켠다 (사용자에게는 아직 안 보인다)
+npx cdk deploy StandinStagingApp -c envName=staging -c converterEnabled=true
+
+# 3. 헬스체크 통과 확인 후 노출
+npx cdk deploy StandinStagingApp -c envName=staging -c converterEnabled=true -c fbxExportEnabled=true
+```
+
+### 사이징 근거
+
+로컬 실측(합성 캐릭터 기준):
+
+| | |
+|---|---|
+| 이미지 | 1.61 GB (Blender 5.2 포함, **amd64 전용**) |
+| Blender 기동만 | 344 MiB / 1.5초 |
+| BVH 파싱 + 리타깃 + FBX export 전체 | **372 MiB / 3.4초** |
+
+요청마다 Blender를 subprocess로 새로 띄우고 **동시 실행은 1개**다
+(`CONVERTER_MAX_CONCURRENT_PROCESSES=1`, uvicorn `--workers 1`). vCPU를 늘려도 처리량이
+늘지 않으므로 **1 vCPU / 2 GB**로 잡았다 — 실측 대비 5배 헤드룸이다. 메모리의 대부분이
+Blender 런타임 자체이고 변환 페이로드는 28 MiB뿐이라, 실제 캐릭터가 커져도 여유가 있다.
+
+BFF는 **인물마다 한 번씩** 호출한다. 동시성이 1이라 3인 이미지는 직렬 ~10초다.
+
+### converter 이미지 태그는 따로다
+
+converter는 빌드 파이프라인이 별개다(`Standin-server/.github/workflows/converter-deploy.yml`).
+지금 그 워크플로는 `main`에서만 돌아 `:latest`만 옮기므로 **두 환경 모두 `latest`를 본다**.
+converter CI가 develop 빌드를 갖게 되면 `stagingConverterImageTag`를 `develop`으로 바꾼다.
+
+### 배포 역할
+
+`converter-deploy.yml`은 `CONVERTER_AWS_DEPLOY_ROLE`이라는 별도 변수로 역할을 받는다.
+그 변수에 `StandinCicd`의 `DeployRoleArn`을 넣으면 이 스택이 준 권한으로 배포된다. 경계를
+정말 분리하고 싶으면 별도 역할을 만들어 그 변수만 바꾸면 되고, 앱 저장소 쪽은 영향이 없다.
 
 ## 배포는 2단계로 나눈다
 

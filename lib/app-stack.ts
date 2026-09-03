@@ -27,6 +27,7 @@ export interface AppStackProps extends StackProps {
   envName: "prod" | "staging";
   bffRepo: ecr.Repository;
   inferenceRepo: ecr.Repository;
+  converterRepo: ecr.Repository;
   /** BFF의 공개 HTTPS 기준 URL(OAuth 콜백·이메일 인증 링크). */
   publicUrl: string;
   /**
@@ -68,6 +69,33 @@ export interface AppStackProps extends StackProps {
   serviceDesiredCount: number;
   /** 앱의 QUOTA_GLOBAL_DAILY. staging은 Gemini 비용 때문에 낮게 잡는다. */
   quotaGlobalDaily: string;
+  /**
+   * converter 서비스를 만들지.
+   *
+   * 두 단계로 나눈 이유는 refine과 같다 — 서비스를 띄워 헬스체크가 통과하는지 먼저 보고,
+   * 그 다음에 `fbxExportEnabled`로 사용자에게 연다.
+   *
+   * ⚠ converter의 `/healthz`는 캐릭터 아티팩트를 검사한다(`default_character`).
+   *   `standin-master-v2.fbx`가 S3에 없으면 503을 돌려주고 ECS가 태스크를 교체 루프에
+   *   넣는다. **아티팩트 업로드가 이 스위치보다 먼저다.**
+   */
+  converterEnabled: boolean;
+  /**
+   * BFF가 클라이언트에 FBX 저장을 노출한다. `converterEnabled=true`일 때만 허용한다.
+   *
+   * 앱은 `CONVERTER_BASE_URL`과 `FBX_EXPORT_ENABLED=true`가 **둘 다** 있어야
+   * `capabilities.fbxExport`를 true로 준다(Standin-app-server/docs/API.md).
+   * false면 저장 포맷 선택에서 FBX가 사라지고 BVH로만 저장된다.
+   */
+  fbxExportEnabled: boolean;
+  /**
+   * converter 태스크 정의가 참조할 ECR 태그.
+   *
+   * BFF·추론과 **따로 둔다**. converter는 빌드 파이프라인이 별개라(`converter-deploy.yml`)
+   * 움직이는 태그가 다른 시점에 다른 규칙으로 움직인다. 같은 `imageTag`를 물리면
+   * 한쪽 파이프라인의 사정이 다른 쪽 배포를 흔든다.
+   */
+  converterImageTag: string;
   /**
    * 태스크 정의가 참조할 ECR 이미지 태그. 환경마다 **달라야 한다**.
    *
@@ -166,6 +194,11 @@ export class AppStack extends Stack {
       description: "Standin analysis queue workers",
     });
 
+    const converterSg = new ec2.SecurityGroup(this, "ConverterSg", {
+      vpc,
+      description: "Standin FBX converter (unauthenticated - never expose publicly)",
+    });
+
     const dbSg = new ec2.SecurityGroup(this, "DbSg", {
       vpc: vpc,
       description: "Standin BFF PostgreSQL",
@@ -175,6 +208,9 @@ export class AppStack extends Stack {
     // 유일하게 허용하는 내부 경로 두 개.
     inferenceSg.addIngressRule(bffSg, ec2.Port.tcp(8000), "BFF to inference");
     inferenceSg.addIngressRule(workerSg, ec2.Port.tcp(8000), "Worker to inference");
+    // converter도 추론과 같은 취급이다 — 무인증이므로 ALB에 붙이지 않고 내부에서만 연다.
+    // 쓰는 쪽은 BFF뿐이다(워커는 FBX를 만들지 않는다).
+    converterSg.addIngressRule(bffSg, ec2.Port.tcp(8001), "BFF to converter");
     dbSg.addIngressRule(bffSg, ec2.Port.tcp(5432), "BFF to PostgreSQL");
     dbSg.addIngressRule(workerSg, ec2.Port.tcp(5432), "Worker to PostgreSQL");
   
@@ -215,6 +251,7 @@ export class AppStack extends Stack {
     // 만들어 쓴다 — 두 군데 하드코딩해 두면 반드시 한쪽만 고쳐진다.
     const namespaceName = isPrimary ? "standin.local" : `standin-${props.envName}.local`;
     const inferenceBaseUrl = `http://inference.${namespaceName}:8000`;
+    const converterBaseUrl = `http://converter.${namespaceName}:8001`;
 
     const cluster = new ecs.Cluster(this, "Cluster", {
       vpc: vpc,
@@ -730,6 +767,15 @@ export class AppStack extends Stack {
          */
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
         REFINE_TIMEOUT_MS: "5000",
+        /**
+         * FBX 저장 노출 스위치. converter 서비스 존재와 **별도**다.
+         *
+         * 앱은 `CONVERTER_BASE_URL`과 `FBX_EXPORT_ENABLED=true`가 둘 다 있어야
+         * `capabilities.fbxExport`를 true로 준다. converter를 띄워 헬스체크를 확인한
+         * 뒤에 이 값을 켠다 — refine과 같은 순서다.
+         */
+        FBX_EXPORT_ENABLED: props.fbxExportEnabled ? "true" : "false",
+        ...(props.converterEnabled ? { CONVERTER_BASE_URL: converterBaseUrl } : {}),
         BETA_CONSENT_VERSION: "2026-08-02",
         DISCORD_ALERT_MENTION: discordAlertMention,
         // 분석/포즈 기능은 계정 JWT 대신 동의된 installation 인증을 요구한다.
@@ -853,6 +899,89 @@ export class AppStack extends Stack {
       maxHealthyPercent: 200,
     });
 
+    // ── FBX converter(선택) ──────────────────────────────────────
+    //
+    // Blender 5.2를 번들한 amd64 이미지다(추론과 다른 아키텍처라 저장소도 따로 둔다).
+    // 실측: Blender 기동만 344 MiB, BVH 파싱+리타깃+FBX export 전체가 372 MiB, 3.4초.
+    // 요청마다 Blender를 subprocess로 새로 띄우고 동시 실행은 1개다
+    // (`CONVERTER_MAX_CONCURRENT_PROCESSES`, uvicorn `--workers 1`) — vCPU를 늘려도
+    // 처리량이 늘지 않으므로 1 vCPU / 2 GB로 잡는다. 2 GB는 실측 대비 5배 헤드룸이다.
+    const converterService = props.converterEnabled
+      ? (() => {
+          const converterTask = new ecs.FargateTaskDefinition(this, "ConverterTask", {
+            cpu: 1024,
+            memoryLimitMiB: 2048,
+            runtimePlatform: {
+              // ⚠ Dockerfile.converter가 amd64를 강제한다(Blender 배포판이 x64뿐이다).
+              cpuArchitecture: ecs.CpuArchitecture.X86_64,
+              operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+            },
+          });
+
+          converterTask.addContainer("converter", {
+            image: ecs.ContainerImage.fromEcrRepository(
+              props.converterRepo,
+              props.converterImageTag,
+            ),
+            logging: containerLogging(converterTask, "converter"),
+            environment: {
+              // 캐릭터 아티팩트. 레지스트리의 sha256과 대조하므로 파일이 바뀌면
+              // converter가 기동을 거부한다(조용한 교체를 막는다).
+              STANDIN_MASTER_V2_URI: `s3://${assets.bucketName}/characters/standin-master-v2.fbx`,
+              CONVERTER_JSON_LOGS: "1",
+              CONVERTER_LOG_LEVEL: "INFO",
+              // 기본 30초. 실측 변환이 3.4초라 여유가 크지만, 캐릭터가 커지면
+              // Blender 기동 비용이 늘어난다. BFF 쪽 상한과 함께 조정한다.
+              CONVERTER_TIMEOUT_SECONDS: "30",
+              // 1을 유지한다. 올리면 Blender 프로세스가 동시에 떠 메모리가 배로 든다.
+              CONVERTER_MAX_CONCURRENT_PROCESSES: "1",
+              DISCORD_ALERT_MENTION: discordAlertMention,
+            },
+            secrets: {
+              DISCORD_WEBHOOK_ALERT: ecs.Secret.fromSecretsManager(discordSecret, "webhookAlert"),
+              DISCORD_WEBHOOK_WARN: ecs.Secret.fromSecretsManager(discordSecret, "webhookWarn"),
+              DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
+            },
+            portMappings: [{ containerPort: 8001 }],
+            healthCheck: {
+              // ⚠ 이 헬스체크는 캐릭터 아티팩트가 있어야 통과한다. `/healthz`의
+              //   `default_character`가 ArtifactUnavailableError면 503이다.
+              command: [
+                "CMD-SHELL",
+                "python -c \"import json,urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8001/healthz',timeout=10); p=json.load(r); sys.exit(0 if r.status==200 and p.get('ok') is True else 1)\"",
+              ],
+              interval: Duration.seconds(30),
+              timeout: Duration.seconds(15),
+              retries: 3,
+              // 이미지가 1.6GB고 캐릭터를 받아 검증한다. 추론(90초)보다 길게 잡는다.
+              startPeriod: Duration.seconds(120),
+            },
+          });
+
+          // 캐릭터 아티팩트를 받으려면 읽기 권한이 필요하다(키를 환경에 두지 않는다).
+          assets.grantRead(converterTask.taskRole);
+
+          return new ecs.FargateService(this, "ConverterService", {
+            cluster,
+            taskDefinition: converterTask,
+            desiredCount: props.serviceDesiredCount,
+            securityGroups: [converterSg],
+            // NAT가 없으므로 퍼블릭 서브넷 + 퍼블릭 IP로 S3에 나간다.
+            vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+            assignPublicIp: true,
+            cloudMapOptions: {
+              name: "converter", // → converter.<namespace> (CONVERTER_BASE_URL와 같은 이름)
+              dnsRecordType: servicediscovery.DnsRecordType.A,
+              dnsTtl: Duration.seconds(10),
+            },
+            circuitBreaker: { rollback: true },
+            availabilityZoneRebalancing: ecs.AvailabilityZoneRebalancing.ENABLED,
+            minHealthyPercent: 100,
+            maxHealthyPercent: 200,
+          });
+        })()
+      : undefined;
+
     new cloudwatch.Alarm(this, "AnalysisQueueAgeAlarm", {
       metric: analysisQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1) }),
       threshold: 120,
@@ -955,6 +1084,7 @@ export class AppStack extends Stack {
           bffService.serviceArn,
           inferenceService.serviceArn,
           workerService.serviceArn,
+          ...(converterService ? [converterService.serviceArn] : []),
         ],
       },
       targets: [new targets.LambdaFunction(infraAlerts)],
@@ -1015,6 +1145,21 @@ export class AppStack extends Stack {
     new CfnOutput(this, "CorsOrigins", {
       value: props.corsOrigins,
       description: "이 환경의 BFF가 허용하는 Origin 목록",
+    });
+    if (converterService) {
+      new CfnOutput(this, "ConverterServiceName", { value: converterService.serviceName });
+      new CfnOutput(this, "ConverterBaseUrl", {
+        value: converterBaseUrl,
+        description: "BFF가 FBX 변환에 호출하는 내부 주소",
+      });
+      new CfnOutput(this, "ConverterCharacterUri", {
+        value: `s3://${assets.bucketName}/characters/standin-master-v2.fbx`,
+        description: "converter가 받는 캐릭터 아티팩트. 없으면 헬스체크가 503이다",
+      });
+    }
+    new CfnOutput(this, "FbxExportEnabled", {
+      value: String(props.fbxExportEnabled),
+      description: "BFF의 FBX 노출 스위치",
     });
     new CfnOutput(this, "ImageTag", {
       value: props.imageTag,
