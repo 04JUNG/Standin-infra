@@ -626,8 +626,14 @@ export class AppStack extends Stack {
       managedPolicyName: isPrimary
         ? "standin-inference-operator"
         : `standin-${props.envName}-inference-operator`,
-      description:
-        "Upload Standin pose libraries and models, and restart only the inference ECS service",
+      // ⚠ Description은 바꾸지 않는다. AWS::IAM::ManagedPolicy에서 이 속성은
+      //   **교체를 강제한다**(requires replacement). 정책 이름이 고정돼 있어
+      //   CloudFormation이 새것을 먼저 만들다 이름 충돌로 실패하고, 설령 교체에
+      //   성공해도 ARN이 바뀌어 이 정책을 붙여 둔 권한 세트·역할의 연결이 끊긴다.
+      //
+      //   허용 범위가 pose-library에서 pose-models까지 넓어졌지만, 그 사실은
+      //   아래 PolicyDocument와 주석이 말한다. 문구를 맞추자고 교체를 감수하지 않는다.
+      description: "Upload Standin pose libraries and restart only the inference ECS service",
       statements: [
         /**
          * 운영자가 올릴 수 있는 프리픽스.
