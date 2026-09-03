@@ -70,6 +70,17 @@ export interface AppStackProps extends StackProps {
   /** 앱의 QUOTA_GLOBAL_DAILY. staging은 Gemini 비용 때문에 낮게 잡는다. */
   quotaGlobalDaily: string;
   /**
+   * Human-Art M 모델 번들의 빌드 ID. 비우면 `POSE_MODEL_URI`를 넣지 않는다.
+   *
+   * 추론이 기동 시 `s3://<assets>/pose-models/humanart-m/<buildId>/manifest.json`을 받아
+   * sha256으로 검증하고 로컬에 원자 공개한다(Standin-server #49). 매니페스트를 가리키고
+   * model.onnx·detector.onnx는 형제 경로로 찾는다.
+   *
+   * ⚠ 값이 있는데 S3에 번들이 없으면 `POSE_MODEL_VARIANT=cascade`에서 **기동이 실패한다.**
+   *   업로드가 이 값보다 먼저다.
+   */
+  poseModelBuildId: string;
+  /**
    * converter 서비스를 만들지.
    *
    * 두 단계로 나눈 이유는 refine과 같다 — 서비스를 띄워 헬스체크가 통과하는지 먼저 보고,
@@ -541,6 +552,19 @@ export class AppStack extends Stack {
         // 1단계에서는 비운다 → 합성 라이브러리로 기동한다.
         // 2단계에서는 번들을 받아 푼다. 번들이 없으면 기동에 실패한다(의도).
         POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
+        /**
+         * Human-Art M 모델 번들. 앱 배포 워크플로가 아니라 **여기가 소유자**다
+         * (Standin-server #49 리뷰에서 정리). 버킷 이름이 환경마다 다른 인프라 설정이고,
+         * workflow가 주입하면 `cdk deploy`의 되돌림에 값이 사라져 cascade가 기동에 실패한다.
+         *
+         * 앱 배포 워크플로는 이 값의 존재만 확인하고 덮어쓰지 않는다.
+         */
+        ...(props.poseModelBuildId
+          ? {
+              POSE_MODEL_URI: `s3://${assets.bucketName}/pose-models/humanart-m/${props.poseModelBuildId}/manifest.json`,
+              POSE_MODELS_ROOT: "/app/data/pose-models",
+            }
+          : {}),
         POSE_LIBRARY_VERSION: "v1",
         DISCORD_ALERT_MENTION: discordAlertMention,
         // refine 게이트는 코드 기본값에 맡기지 않고 배포에서 명시한다.
@@ -567,7 +591,18 @@ export class AppStack extends Stack {
         interval: Duration.seconds(30),
         timeout: Duration.seconds(5),
         retries: 3,
-        startPeriod: Duration.seconds(90), // 라이브러리 다운로드 시간 확보
+        /**
+         * 기동 유예. 받아야 할 것이 많다.
+         *   포즈 라이브러리 번들   19 MB (S3)
+         *   rtmlib 가중치          527 MB (openmmlab, yolox_x 351 + rtmpose 176)
+         *   Human-Art M 번들       450 MB (S3, poseModelBuildId가 있을 때)
+         *
+         * 추론의 모델 다운로드 예산이 기본 300초인데(`POSE_MODEL_DOWNLOAD_BUDGET_SECONDS`)
+         * 그 예산은 current-X 초기화 시간을 포함하지 않는다. 유예가 예산보다 짧으면
+         * **정상 기동 중인 태스크를 ECS가 먼저 죽여 교체 루프에 빠진다.**
+         * 그래서 예산과 같은 300초로 맞춘다(ECS 상한).
+         */
+        startPeriod: Duration.seconds(300),
       },
     });
 
