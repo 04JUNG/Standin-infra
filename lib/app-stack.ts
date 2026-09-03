@@ -626,27 +626,45 @@ export class AppStack extends Stack {
       managedPolicyName: isPrimary
         ? "standin-inference-operator"
         : `standin-${props.envName}-inference-operator`,
-      description: "Upload Standin pose libraries and restart only the inference ECS service",
+      description:
+        "Upload Standin pose libraries and models, and restart only the inference ECS service",
       statements: [
+        /**
+         * 운영자가 올릴 수 있는 프리픽스.
+         *
+         *   pose-library/ — 포즈 라이브러리 번들(poses.db · bvh · thumbs)
+         *   pose-models/  — 추론 모델 번들(Human-Art M 등 manifest + ONNX)
+         *
+         * 버킷 전체를 열지 않는다. 같은 버킷에 `characters/`(converter 캐릭터)와
+         * 앱이 읽는 다른 자산이 함께 있고, 이 역할은 사람에게 붙는다.
+         */
         new iam.PolicyStatement({
-          sid: "ListPoseLibraryPrefix",
+          sid: "ListUploadablePrefixes",
           actions: ["s3:ListBucket", "s3:ListBucketVersions"],
           resources: [assets.bucketArn],
           conditions: {
             StringLike: {
-              "s3:prefix": ["pose-library", "pose-library/*"],
+              "s3:prefix": [
+                "pose-library",
+                "pose-library/*",
+                "pose-models",
+                "pose-models/*",
+              ],
             },
           },
         }),
         new iam.PolicyStatement({
-          sid: "UploadAndVerifyPoseLibrary",
+          sid: "UploadAndVerifyPoseAssets",
           actions: [
             "s3:PutObject",
             "s3:GetObject",
             "s3:GetObjectVersion",
             "s3:AbortMultipartUpload",
           ],
-          resources: [assets.arnForObjects("pose-library/*")],
+          resources: [
+            assets.arnForObjects("pose-library/*"),
+            assets.arnForObjects("pose-models/*"),
+          ],
         }),
         new iam.PolicyStatement({
           sid: "RestartInferenceService",
