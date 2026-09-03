@@ -11,6 +11,12 @@ import type { Construct } from "constructs";
 export class RegistryStack extends Stack {
   public readonly bffRepo: ecr.Repository;
   public readonly inferenceRepo: ecr.Repository;
+  /**
+   * FBX converter(Blender 5.2 번들). 추론과 따로 두는 이유는 이미지가 완전히 다르기
+   * 때문이다 — Blender를 포함해 1.6GB이고 amd64 전용이다. 같은 저장소에 섞으면
+   * 라이프사이클 규칙(최근 20개)이 서로의 롤백 대상을 밀어낸다.
+   */
+  public readonly converterRepo: ecr.Repository;
 
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -40,6 +46,14 @@ export class RegistryStack extends Stack {
     this.inferenceRepo = new ecr.Repository(this, "InferenceRepo", {
       ...common,
       repositoryName: "standin/inference",
+      lifecycleRules: [
+        { description: "최근 20개만 보관", maxImageCount: 20 },
+      ],
+    });
+
+    this.converterRepo = new ecr.Repository(this, "ConverterRepo", {
+      ...common,
+      repositoryName: "standin/converter",
       lifecycleRules: [
         { description: "최근 20개만 보관", maxImageCount: 20 },
       ],

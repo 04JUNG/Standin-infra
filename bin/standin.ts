@@ -72,6 +72,33 @@ function booleanContext(name: string, defaultValue = false): boolean {
   throw new Error(`${name} must be true or false`);
 }
 
+/**
+ * FBX converter. refine과 같은 두 단계 스위치다.
+ *
+ *   converterEnabled  — converter 서비스를 만든다
+ *   fbxExportEnabled  — BFF가 클라이언트에 FBX 저장을 노출한다
+ *
+ * ⚠ converter의 `/healthz`는 캐릭터 아티팩트(`standin-master-v2.fbx`)를 검사한다.
+ *   S3에 없으면 503이고 ECS가 태스크를 교체 루프에 넣는다. 업로드가 먼저다.
+ */
+const converterEnabled = booleanContext("converterEnabled");
+const fbxExportEnabled = booleanContext("fbxExportEnabled");
+if (fbxExportEnabled && !converterEnabled) {
+  throw new Error("fbxExportEnabled=true requires converterEnabled=true");
+}
+
+/**
+ * converter 이미지 태그. BFF·추론과 **따로 둔다**.
+ *
+ * converter는 빌드 파이프라인이 별개다(`converter-deploy.yml`). 지금 그 워크플로는
+ * `main`에서만 돌아 `:latest`만 옮기므로 두 환경 모두 `latest`를 본다. converter CI가
+ * develop 빌드를 갖게 되면 staging을 `-c stagingConverterImageTag=develop`으로 넘긴다.
+ */
+const converterImageTag = String(
+  app.node.tryGetContext(isStaging ? "stagingConverterImageTag" : "converterImageTag") ??
+    "latest",
+);
+
 const refineEnabled = booleanContext("refineEnabled");
 const refineFeatureEnabled = booleanContext("refineFeatureEnabled");
 if (refineFeatureEnabled && !refineEnabled) {
@@ -196,6 +223,7 @@ new CicdStack(app, "StandinCicd", {
   appStackPrefixes: ["StandinApp", "StandinStagingApp"],
   bffRepo: registry.bffRepo,
   inferenceRepo: registry.inferenceRepo,
+  converterRepo: registry.converterRepo,
 });
 
 const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp", {
@@ -203,6 +231,7 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   envName,
   bffRepo: registry.bffRepo,
   inferenceRepo: registry.inferenceRepo,
+  converterRepo: registry.converterRepo,
   publicUrl,
   certificateArn,
   corsOrigins,
@@ -213,6 +242,9 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   jobExecutionMode,
   serviceDesiredCount,
   quotaGlobalDaily,
+  converterEnabled,
+  fbxExportEnabled,
+  converterImageTag,
   imageTag,
   logShipping,
   logRetentionDays,
