@@ -64,7 +64,7 @@
     "//stagingQuotaGlobalDaily": "staging도 실제 Gemini를 호출한다 — 상한을 낮게 둬 테스트가 예산을 태우지 않게 한다.",
     "stagingQuotaGlobalDaily": "50",
     "//stagingPoseModelBuildId": "staging에 먼저 올려 검증한 뒤 프로덕션 poseModelBuildId를 채운다.",
-    "stagingPoseModelBuildId": "",
+    "stagingPoseModelBuildId": "20260828.codex1-fp32-cpu-raw-simcc",
     "//stagingConverterImageTag": "converter CI가 develop 빌드를 갖게 되면 develop으로 바꾼다. 지금은 main 빌드뿐이라 프로덕션과 같은 latest를 본다.",
     "stagingConverterImageTag": "latest",
     "//stagingCorsOrigins": "프로덕션 가입 페이지(standin-seven.vercel.app)를 넣지 않는다. staging용 Vercel 브랜치 고정 도메인을 여기 추가한다.",
