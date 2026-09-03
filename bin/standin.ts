@@ -99,6 +99,16 @@ const converterImageTag = String(
     "latest",
 );
 
+/**
+ * Human-Art M 모델 번들 빌드 ID. 비우면 `POSE_MODEL_URI`를 넣지 않는다.
+ *
+ * ⚠ 값이 있는데 S3에 번들이 없으면 cascade 경로에서 추론이 기동에 실패한다.
+ *   업로드 → 이 값 → 배포 순서를 지킨다.
+ */
+const poseModelBuildId = String(
+  app.node.tryGetContext(isStaging ? "stagingPoseModelBuildId" : "poseModelBuildId") ?? "",
+);
+
 const refineEnabled = booleanContext("refineEnabled");
 const refineFeatureEnabled = booleanContext("refineFeatureEnabled");
 if (refineFeatureEnabled && !refineEnabled) {
@@ -242,6 +252,7 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   jobExecutionMode,
   serviceDesiredCount,
   quotaGlobalDaily,
+  poseModelBuildId,
   converterEnabled,
   fbxExportEnabled,
   converterImageTag,
