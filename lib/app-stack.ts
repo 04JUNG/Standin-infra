@@ -775,7 +775,23 @@ export class AppStack extends Stack {
          * 뒤에 이 값을 켠다 — refine과 같은 순서다.
          */
         FBX_EXPORT_ENABLED: props.fbxExportEnabled ? "true" : "false",
-        ...(props.converterEnabled ? { CONVERTER_BASE_URL: converterBaseUrl } : {}),
+        ...(props.converterEnabled
+          ? {
+              CONVERTER_BASE_URL: converterBaseUrl,
+              /**
+               * BFF가 converter 응답을 기다리는 상한. 앱 기본값은 35초인데 그게
+               * staging에서 정상 변환을 잘랐다(504, `CONVERTER_TIMEOUT`).
+               *
+               * converter는 동시 실행이 1개라(`CONVERTER_MAX_CONCURRENT_PROCESSES`)
+               * 대기 시간이 변환 시간에 더해진다. BFF는 **인물마다 한 번씩** 부르므로
+               * 2인 컷이면 두 번째 호출이 첫 변환 뒤에 줄을 선다. 실제로 그 요청이
+               * 35초에 잘렸는데 converter는 그 뒤 변환을 끝까지 마쳤다 — 버려진 일이다.
+               *
+               * converter 자신의 상한(60초)보다 넉넉해야 대기까지 흡수한다.
+               */
+              CONVERTER_TIMEOUT_MS: "90000",
+            }
+          : {}),
         BETA_CONSENT_VERSION: "2026-08-02",
         DISCORD_ALERT_MENTION: discordAlertMention,
         // 분석/포즈 기능은 계정 JWT 대신 동의된 installation 인증을 요구한다.
@@ -939,9 +955,14 @@ export class AppStack extends Stack {
               // 인프라가 먼저 깨진다.
               CONVERTER_JSON_LOGS: "1",
               CONVERTER_LOG_LEVEL: "INFO",
-              // 기본 30초. 실측 변환이 3.4초라 여유가 크지만, 캐릭터가 커지면
-              // Blender 기동 비용이 늘어난다. BFF 쪽 상한과 함께 조정한다.
-              CONVERTER_TIMEOUT_SECONDS: "30",
+              /**
+               * 변환 하나의 상한.
+               *
+               * 처음 30초로 잡은 근거는 합성 캐릭터(64 KB) 실측 3.4초였는데, 실제
+               * `standin-master-v2`(1.72 MB)로는 **한 건에 18~35초**가 걸린다. 30초는
+               * 정상 변환을 자르는 값이다. staging 실측(2026-09-03)에 맞춰 올린다.
+               */
+              CONVERTER_TIMEOUT_SECONDS: "60",
               CONVERTER_TERMINATE_GRACE_SECONDS: "2",
               // 1을 유지한다. 올리면 Blender 프로세스가 동시에 떠 메모리가 배로 든다.
               CONVERTER_MAX_CONCURRENT_PROCESSES: "1",
