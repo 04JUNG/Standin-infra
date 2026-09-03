@@ -925,16 +925,30 @@ export class AppStack extends Stack {
             ),
             logging: containerLogging(converterTask, "converter"),
             environment: {
-              // 캐릭터 아티팩트. 레지스트리의 sha256과 대조하므로 파일이 바뀌면
-              // converter가 기동을 거부한다(조용한 교체를 막는다).
+              APP_ENV: props.appEnv,
+              // 캐릭터 아티팩트. converter가 S3에서 받아 레지스트리의 sha256과 대조한다
+              // (Standin-server #44). 파일이 바뀌면 ArtifactIntegrityError로 거부하므로
+              // 조용한 교체가 일어나지 않는다.
+              //
+              // 이름은 레지스트리의 `artifact_uri_env`와 정확히 같아야 한다
+              // (config/characters.example.json). 캐릭터를 추가하면 여기도 한 줄 는다.
               STANDIN_MASTER_V2_URI: `s3://${assets.bucketName}/characters/standin-master-v2.fbx`,
+              STANDIN_FEMALE_V2_LBS_URI: `s3://${assets.bucketName}/characters/standin-female-v2-lbs.fbx`,
+              // `CONVERTER_CHARACTER_REGISTRY`는 일부러 두지 않는다 — 이미지 기본값이
+              // 레지스트리 경로를 안다. 여기서 경로를 굳히면 이미지가 그 파일을 옮길 때
+              // 인프라가 먼저 깨진다.
               CONVERTER_JSON_LOGS: "1",
               CONVERTER_LOG_LEVEL: "INFO",
               // 기본 30초. 실측 변환이 3.4초라 여유가 크지만, 캐릭터가 커지면
               // Blender 기동 비용이 늘어난다. BFF 쪽 상한과 함께 조정한다.
               CONVERTER_TIMEOUT_SECONDS: "30",
+              CONVERTER_TERMINATE_GRACE_SECONDS: "2",
               // 1을 유지한다. 올리면 Blender 프로세스가 동시에 떠 메모리가 배로 든다.
               CONVERTER_MAX_CONCURRENT_PROCESSES: "1",
+              // V3.2.4로 되돌리는 킬 스위치. 평시에는 꺼 둔다.
+              CONVERTER_FORCE_EXACT_V324: "false",
+              // 입력 BVH 상한(2 MiB). Blender에 넘기기 전에 거른다.
+              CONVERTER_MAX_BVH_BYTES: "2097152",
               DISCORD_ALERT_MENTION: discordAlertMention,
             },
             secrets: {
@@ -1152,9 +1166,12 @@ export class AppStack extends Stack {
         value: converterBaseUrl,
         description: "BFF가 FBX 변환에 호출하는 내부 주소",
       });
-      new CfnOutput(this, "ConverterCharacterUri", {
-        value: `s3://${assets.bucketName}/characters/standin-master-v2.fbx`,
-        description: "converter가 받는 캐릭터 아티팩트. 없으면 헬스체크가 503이다",
+      new CfnOutput(this, "ConverterCharacterUris", {
+        value: [
+          `s3://${assets.bucketName}/characters/standin-master-v2.fbx`,
+          `s3://${assets.bucketName}/characters/standin-female-v2-lbs.fbx`,
+        ].join(","),
+        description: "converter가 받는 캐릭터 아티팩트. 기본 캐릭터가 없으면 헬스체크가 503이다",
       });
     }
     new CfnOutput(this, "FbxExportEnabled", {
