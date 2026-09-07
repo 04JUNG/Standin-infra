@@ -39,9 +39,9 @@
     "//poseModelBuildId": "Human-Art M 번들 빌드 ID. 비우면 POSE_MODEL_URI를 넣지 않는다. ⚠ 값을 넣기 전에 s3://<assets>/pose-models/humanart-m/<buildId>/ 에 번들이 있어야 한다 — 없으면 cascade에서 추론이 기동 실패한다.",
     "poseModelBuildId": "",
     "//converterEnabled": "FBX converter 서비스를 만들지. ⚠ 켜기 전에 characters/standin-master-v2.fbx를 assets 버킷에 올려야 한다 — 없으면 헬스체크가 503이라 태스크가 교체 루프에 빠진다.",
-    "converterEnabled": false,
+    "converterEnabled": true,
     "//fbxExportEnabled": "BFF의 FBX 노출 스위치. converterEnabled=true일 때만 true 허용. refine과 같은 두 단계다.",
-    "fbxExportEnabled": false,
+    "fbxExportEnabled": true,
     "//converterImageTag": "converter는 빌드 파이프라인이 별개다(converter-deploy.yml, 현재 main 전용). 그래서 BFF·추론의 imageTag와 따로 둔다.",
     "converterImageTag": "latest",
 
