@@ -222,6 +222,9 @@ export class AppStack extends Stack {
     // converter도 추론과 같은 취급이다 — 무인증이므로 ALB에 붙이지 않고 내부에서만 연다.
     // 쓰는 쪽은 BFF뿐이다(워커는 FBX를 만들지 않는다).
     converterSg.addIngressRule(bffSg, ec2.Port.tcp(8001), "BFF to converter");
+    // 추론도 converter를 부른다 — /refine 미리보기를 V3.2.5 FBX 모델로 그린다
+    // (Standin-server #52). 이 규칙이 없으면 렌더 호출이 조용히 막힌다.
+    converterSg.addIngressRule(inferenceSg, ec2.Port.tcp(8001), "Inference to converter");
     dbSg.addIngressRule(bffSg, ec2.Port.tcp(5432), "BFF to PostgreSQL");
     dbSg.addIngressRule(workerSg, ec2.Port.tcp(5432), "Worker to PostgreSQL");
   
@@ -564,6 +567,18 @@ export class AppStack extends Stack {
               POSE_MODEL_URI: `s3://${assets.bucketName}/pose-models/humanart-m/${props.poseModelBuildId}/manifest.json`,
               POSE_MODELS_ROOT: "/app/data/pose-models",
             }
+          : {}),
+        /**
+         * /refine 미리보기를 그리는 converter 주소. BFF가 쓰는 것과 같은 값이다
+         * (Standin-server #52). 앱 배포 워크플로는 이 값의 **존재만** 확인하고
+         * 없으면 배포를 막는다 — POSE_MODEL_URI와 같이 여기가 소유자다.
+         *
+         * appEnv=production에서 비어 있으면 추론이 기동을 거부한다(fail-closed).
+         * converter 없이 띄우려면 서버 쪽에서 REFINE_THUMBNAIL_RENDERER=mannequin으로
+         * 옛 마네킹 렌더러를 골라야 한다.
+         */
+        ...(props.converterEnabled
+          ? { REFINE_THUMBNAIL_CONVERTER_URL: converterBaseUrl }
           : {}),
         POSE_LIBRARY_VERSION: "v1",
         DISCORD_ALERT_MENTION: discordAlertMention,
