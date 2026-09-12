@@ -144,7 +144,25 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 분석을 즉시 중단·재개하는 스위치는 **인프라가 아니라 DB**(`service_flags`)에 있다. 재배포가
 필요 없고 전 태스크에 최대 5초 안에 전파된다. 조작은 BFF의 관리자 API로 한다 —
 `Standin-app-server/README.md`의 「Kill switch」 절 참고. 토큰은
-`standin/<env>/beta-review-token` 시크릿이다.
+`standin/production/beta-review-token` 시크릿이다(staging은 `standin/staging/...`).
+
+### 시크릿 이름의 환경 구분자
+
+이름 규칙이 **두 가지 섞여 있다.** 프로덕션 물리 이름을 나중에 바꾸면 JWT 서명 키가 교체되어
+모든 세션이 끊기므로, 먼저 배포된 시크릿은 이름을 손대지 않았기 때문이다
+([lib/app-stack.ts](lib/app-stack.ts)의 `secretName()`과 `envSegment`).
+
+| | 프로덕션 | staging |
+|---|---|---|
+| 먼저 배포된 것 (`jwt`·`db`·`oauth`·`smtp`·`discord`·`vlm`) | `standin/jwt` — **구분자 없음** | `standin/staging/jwt` |
+| 나중에 추가된 것 (`beta-review-token`·`ip-hash-salt`) | `standin/production/beta-review-token` | `standin/staging/beta-review-token` |
+
+프로덕션 구분자는 `envName`(`prod`)이 아니라 **`appEnv`(`production`)**다. `prod`로 적으면
+`ResourceNotFoundException`이 난다. 실제 이름은 이렇게 확인한다.
+
+```bash
+aws secretsmanager list-secrets --region ap-northeast-2 --query "SecretList[].Name" --output text
+```
 
 ## cdk.json은 배포 상태의 사본이다
 
@@ -592,7 +610,35 @@ npx cdk deploy StandinApp -c logShipping=firelens        # 외부 수집기로 �
 https://api.standinpose.com/v1/admin/ops/dashboard
 ```
 
-관리자 토큰(`standin/<env>/beta-review-token`)을 화면에서 입력한다. 주소창에 `?token=`으로 넘겨도 되지만 페이지가 로드 즉시 지운다.
+### 여는 법
+
+관리자 미들웨어가 **대시보드 HTML 자체를 토큰으로 막는다.** 토큰 없이 주소를 열면 페이지가
+아니라 404가 온다(401이 아니다 — 관리자 경로가 있다는 사실 자체를 숨긴다). 그래서 `?token=`은
+선택지가 아니라 **유일한 진입로**다. 화면 안의 입력칸은 이미 열린 페이지에서 토큰을 바꿀 때 쓴다.
+
+```bash
+aws secretsmanager get-secret-value --secret-id standin/production/beta-review-token --region ap-northeast-2 --query SecretString --output text
+```
+
+```
+https://api.standinpose.com/v1/admin/ops/dashboard?token=<위 값>
+```
+
+페이지가 로드 즉시 `history.replaceState`로 주소창에서 토큰을 지우고 `sessionStorage`로 옮긴다
+— 히스토리와 리퍼러에 남지 않는다. 세션 저장소라 **새 탭에서는 `?token=`을 다시 붙여야 한다.**
+
+### 특정 설치가 무엇을 돌렸는지
+
+대시보드는 집계만 낸다. 설치 하나의 기록은 BFF의 관리자 API로 본다.
+
+```bash
+curl -s "https://api.standinpose.com/v1/admin/review/installations/$INSTALLATION_ID/jobs?status=failed" -H "X-Beta-Admin-Token: $TOKEN"
+```
+
+성공·실패와 에러코드는 **RDS에 있다.** S3(`betaData`)에 있는 것은 파일뿐이다(원본 이미지·조정본
+BVH). 실패 목록을 훑으려고 버킷을 열 필요는 없다 — 원본 이미지가 필요하면
+`/v1/admin/review/jobs/{jobId}`가 5분짜리 서명 URL로 준다. 응답 형식은
+`Standin-app-server/docs/API.md`의 「관리자 품질 검토」 절.
 
 별도 박스를 세우지 않은 이유: 데이터가 isolated 서브넷의 RDS에 있어 **어떤 대시보드든 BFF를 거쳐야 읽는다.** 따로 세워도 BFF가 죽으면 화면만 뜨고 숫자는 안 나온다 — 월 $5~14를 내고 독립성을 사지 못한다. 그 독립성은 위 8번 외부 감시자가 월 $0에 준다.
 
