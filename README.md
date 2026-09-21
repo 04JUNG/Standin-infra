@@ -225,6 +225,7 @@ CloudFormation은 **스택 이름으로 리소스를 추적한다.** 대칭을 �
 | KMS 별칭 | `alias/standin-production-beta-data` | `alias/standin-staging-beta-data` |
 | 내부 DNS | `standin.local` | `standin-staging.local` |
 | 운영 정책 | `standin-inference-operator` | `standin-staging-inference-operator` |
+| 팀 조회 정책 | `standin-team-viewer` | `standin-staging-team-viewer` |
 | ECR 저장소 | `standin/bff`, `standin/inference` — **공유** | |
 | 이미지 태그 | `:latest` (main 빌드가 옮긴다) | `:develop` (develop 빌드가 옮긴다) |
 | OIDC 배포 역할 | `standin-github-deploy` — **공유** (GitHub environment로 구분) | |
@@ -508,6 +509,52 @@ aws logs tail <InferenceLogGroupName> --since 30m --profile standin-inference
 태스크 교체 시 사라지므로 운영 절차로 사용하지 않는다.
 
 자세한 담당자 안내는 [INFERENCE_OPERATOR_GUIDE.md](INFERENCE_OPERATOR_GUIDE.md) 참고.
+
+#### 팀원 조회 권한 (읽기 전용)
+
+운영을 같이 보는 팀원에게는 `standin-team-viewer` 관리형 정책을 준다(출력
+`TeamViewerPolicyArn`).
+
+**⚠ 프로덕션 계정(136889124221)에서는 Identity Center를 쓸 수 없다.** 이 계정은 조직의
+Innovation Sandbox 계정이고, 조직 SCP가 `sso:*`를 명시적으로 막는다. 권한 세트는 관리
+계정에서만 만들 수 있다. 그래서 여기서는 위 원칙("사람별 IAM 사용자를 만들지 않는다")의
+예외로 **팀원마다 콘솔 전용 IAM 사용자**를 둔다.
+
+- 이름은 영문이다(IAM 이름에 한글 불가). 예: 동원 → `dongwon`
+- 연결 정책: `standin-team-viewer` + `IAMUserChangePassword`(첫 로그인 때 비밀번호 변경용)
+- **액세스 키는 만들지 않는다.** 콘솔 비밀번호만 켜고, 첫 로그인 뒤 MFA를 등록하게 한다
+- 로그인 주소: `https://136889124221.signin.aws.amazon.com/console`
+
+```bash
+aws iam create-user --user-name <이름> --tags Key=purpose,Value=standin-team-viewer
+aws iam attach-user-policy --user-name <이름> --policy-arn arn:aws:iam::136889124221:policy/standin-team-viewer
+aws iam attach-user-policy --user-name <이름> --policy-arn arn:aws:iam::aws:policy/IAMUserChangePassword
+aws iam create-login-profile --user-name <이름> --password '<임시 비밀번호>' --password-reset-required
+```
+
+빼는 순서는 반대다 — `delete-login-profile` → 정책 `detach-user-policy` → MFA 해제 → `delete-user`.
+
+현재 발급: `dongwon`(2026-09-21).
+
+| 대상 | 허용 |
+|---|---|
+| 서비스 로그 그룹(inference·bff·analysis-worker·converter) | tail·검색·Logs Insights·Live Tail |
+| 다른 로그 그룹 | 이름만 |
+| `AssetsBucket`, `BetaDataBucket` | 목록·객체 읽기(BetaData는 S3 경유 KMS 복호화 포함) |
+| 쓰기·삭제·ECS 변경·시크릿 | **없음** |
+
+⚠ 추론 운영자 정책과 달리 **BFF·worker 로그와 BetaDataBucket을 연다.** 여기에는 베타
+사용자가 올린 사진과 그 파생물이 있다. 그 데이터를 봐도 되는 팀원에게만 붙인다.
+
+시크릿 읽기는 일부러 없다 — 대시보드 토큰 시크릿을 읽을 수 있으면 다른 사람의 토큰까지
+보인다(아래 「토큰은 사람마다 다르게 준다」). 대시보드는 사람별 토큰으로 따로 연다.
+
+```bash
+aws sso login --profile standin-viewer
+aws logs describe-log-groups --profile standin-viewer --query 'logGroups[].logGroupName'
+aws logs tail <그룹 이름> --since 30m --follow --profile standin-viewer
+aws s3 ls s3://<BetaDataBucketName>/ --profile standin-viewer
+```
 
 ### 3. 소셜 로그인 키
 
