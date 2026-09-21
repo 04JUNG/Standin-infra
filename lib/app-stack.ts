@@ -449,12 +449,17 @@ export class AppStack extends Stack {
      * firelens 모드에서는 fluent-bit 사이드카가 로그를 받아 외부로 보낸다. 사이드카 자신의
      * 로그는 CloudWatch에 짧게 남긴다 — 출하가 깨졌을 때 그 사실을 알 수 있는 유일한 경로다.
      */
+    // 팀 조회 정책이 서비스 로그 그룹을 이름이 아니라 참조로 잡도록 드라이버를 모아 둔다.
+    // awslogs 드라이버는 컨테이너에 바인딩된 뒤에야 그룹을 노출하므로 나중에 꺼낸다.
+    const serviceLogDrivers: ecs.AwsLogDriver[] = [];
     const containerLogging = (
       taskDefinition: ecs.FargateTaskDefinition,
       streamPrefix: string,
     ): ecs.LogDriver => {
       if (props.logShipping === "cloudwatch" || !logShippingSecret) {
-        return ecs.LogDrivers.awsLogs({ streamPrefix, logRetention });
+        const driver = new ecs.AwsLogDriver({ streamPrefix, logRetention });
+        serviceLogDrivers.push(driver);
+        return driver;
       }
 
       taskDefinition.addFirelensLogRouter("log-router", {
@@ -1091,6 +1096,82 @@ export class AppStack extends Stack {
         })()
       : undefined;
 
+    // ── 팀원 조회 권한 ───────────────────────────────────────────
+    // 운영을 같이 보는 팀원용 **읽기 전용** 정책이다. 추론 운영자 정책과 마찬가지로 사람
+    // 자격증명은 만들지 않고, IAM Identity Center 권한 세트에 이 정책을 연결한다.
+    //
+    // ⚠ BFF·worker 로그와 BetaDataBucket에는 사용자 데이터(베타 입력 이미지, refine
+    //   조정본)가 있다. 추론 운영자 정책이 이를 일부러 뺀 것과 달리 이 정책은 연다 —
+    //   받을 사람을 그 데이터를 봐도 되는 팀원으로 한정한다. 쓰기·삭제는 주지 않는다.
+    const serviceLogGroups = serviceLogDrivers
+      .map((driver) => driver.logGroup)
+      .filter((group): group is logs.ILogGroup => group !== undefined);
+    const teamViewerPolicy = new iam.ManagedPolicy(this, "TeamViewerPolicy", {
+      managedPolicyName: isPrimary ? "standin-team-viewer" : `standin-${props.envName}-team-viewer`,
+      // ⚠ Description은 교체를 강제한다(InferenceOperatorPolicy 주석 참고). 바꾸지 않는다.
+      description: "Read-only access to Standin service logs and S3 buckets",
+      statements: [
+        ...(serviceLogGroups.length > 0
+          ? [
+              new iam.PolicyStatement({
+                sid: "ReadServiceLogs",
+                actions: [
+                  "logs:DescribeLogStreams",
+                  "logs:GetLogEvents",
+                  "logs:FilterLogEvents",
+                  "logs:StartLiveTail",
+                  "logs:StartQuery",
+                ],
+                // 이벤트 API는 `:*`가 붙은 ARN을, Live Tail은 붙지 않은 ARN을 검사한다.
+                resources: serviceLogGroups.flatMap((group) => [
+                  group.logGroupArn,
+                  `arn:aws:logs:${this.region}:${this.account}:log-group:${group.logGroupName}`,
+                ]),
+              }),
+              new iam.PolicyStatement({
+                // 리소스 단위를 지원하지 않는 액션들. 질의 시작(StartQuery)이 위에서
+                // 서비스 그룹으로 묶여 있어 다른 그룹 내용에는 닿지 못한다.
+                sid: "ReadOwnLogQueryResults",
+                actions: ["logs:GetQueryResults", "logs:DescribeQueries", "logs:StopQuery"],
+                resources: ["*"],
+              }),
+            ]
+          : []),
+        new iam.PolicyStatement({
+          // 콘솔 목록용. 이름만 보이고 내용은 보이지 않는다.
+          sid: "ListLogGroupNames",
+          actions: ["logs:DescribeLogGroups"],
+          resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:*`],
+        }),
+        new iam.PolicyStatement({
+          // S3 콘솔 첫 화면의 버킷 목록. 버킷 이름만 보인다.
+          sid: "ListBucketNames",
+          actions: ["s3:ListAllMyBuckets", "s3:GetBucketLocation"],
+          resources: ["*"],
+        }),
+        new iam.PolicyStatement({
+          sid: "ListStandinBuckets",
+          actions: ["s3:ListBucket", "s3:ListBucketVersions"],
+          resources: [assets.bucketArn, betaData.bucketArn],
+        }),
+        new iam.PolicyStatement({
+          sid: "ReadStandinObjects",
+          actions: ["s3:GetObject", "s3:GetObjectVersion"],
+          resources: [assets.arnForObjects("*"), betaData.arnForObjects("*")],
+        }),
+        new iam.PolicyStatement({
+          // BetaDataBucket은 전용 KMS 키로 암호화돼 있어 복호화 권한이 없으면 GetObject가
+          // AccessDenied로 끝난다. S3를 거친 요청으로만 키를 쓰게 묶는다.
+          sid: "DecryptBetaDataViaS3",
+          actions: ["kms:Decrypt"],
+          resources: [betaDataKey.keyArn],
+          conditions: {
+            StringEquals: { "kms:ViaService": `s3.${this.region}.amazonaws.com` },
+          },
+        }),
+      ],
+    });
+
     new cloudwatch.Alarm(this, "AnalysisQueueAgeAlarm", {
       metric: analysisQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1) }),
       threshold: 120,
@@ -1288,6 +1369,10 @@ export class AppStack extends Stack {
     new CfnOutput(this, "InferenceOperatorPolicyArn", {
       value: inferenceOperatorPolicy.managedPolicyArn,
       description: "IAM Identity Center 팀 권한 세트 또는 기존 역할에 연결할 추론 운영 정책",
+    });
+    new CfnOutput(this, "TeamViewerPolicyArn", {
+      value: teamViewerPolicy.managedPolicyArn,
+      description: "팀원 권한 세트에 연결할 읽기 전용 정책(서비스 로그 + S3 버킷)",
     });
     }
 }
