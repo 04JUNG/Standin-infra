@@ -513,8 +513,28 @@ aws logs tail <InferenceLogGroupName> --since 30m --profile standin-inference
 #### 팀원 조회 권한 (읽기 전용)
 
 운영을 같이 보는 팀원에게는 `standin-team-viewer` 관리형 정책을 준다(출력
-`TeamViewerPolicyArn`). 붙이는 방법은 위와 같다 — Identity Center에 팀원용 권한 세트를
-만들고 이 고객 관리형 정책을 연결한다. 사람별 IAM 사용자·장기 키는 만들지 않는다.
+`TeamViewerPolicyArn`).
+
+**⚠ 프로덕션 계정(136889124221)에서는 Identity Center를 쓸 수 없다.** 이 계정은 조직의
+Innovation Sandbox 계정이고, 조직 SCP가 `sso:*`를 명시적으로 막는다. 권한 세트는 관리
+계정에서만 만들 수 있다. 그래서 여기서는 위 원칙("사람별 IAM 사용자를 만들지 않는다")의
+예외로 **팀원마다 콘솔 전용 IAM 사용자**를 둔다.
+
+- 이름은 영문이다(IAM 이름에 한글 불가). 예: 동원 → `dongwon`
+- 연결 정책: `standin-team-viewer` + `IAMUserChangePassword`(첫 로그인 때 비밀번호 변경용)
+- **액세스 키는 만들지 않는다.** 콘솔 비밀번호만 켜고, 첫 로그인 뒤 MFA를 등록하게 한다
+- 로그인 주소: `https://136889124221.signin.aws.amazon.com/console`
+
+```bash
+aws iam create-user --user-name <이름> --tags Key=purpose,Value=standin-team-viewer
+aws iam attach-user-policy --user-name <이름> --policy-arn arn:aws:iam::136889124221:policy/standin-team-viewer
+aws iam attach-user-policy --user-name <이름> --policy-arn arn:aws:iam::aws:policy/IAMUserChangePassword
+aws iam create-login-profile --user-name <이름> --password '<임시 비밀번호>' --password-reset-required
+```
+
+빼는 순서는 반대다 — `delete-login-profile` → 정책 `detach-user-policy` → MFA 해제 → `delete-user`.
+
+현재 발급: `dongwon`(2026-09-21).
 
 | 대상 | 허용 |
 |---|---|
