@@ -16,7 +16,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 |---|---|---|
 | `StandinRegistry` | ECR 저장소 3개(bff·inference·converter) | 이미지는 앱보다 오래 산다. 앱 스택을 지워도 롤백 대상이 남아야 한다 |
 | `StandinCicd` | GitHub OIDC 공급자 + 배포 역할 | 앱 스택보다 먼저 있어야 CI가 이미지를 밀어 넣을 수 있다 |
-| `StandinApp` | VPC·보안그룹·RDS·ECS·ALB·S3·시크릿 (프로덕션) | 아래 참고 |
+| `StandinApp` | VPC·보안그룹·RDS·ECS·ALB·S3·시크릿·사람용 IAM 정책/그룹 (프로덕션) | 아래 참고 |
 | `StandinStagingApp` | 같은 구성의 테스트 환경 | 프로덕션에 바로 배포하지 않기 위해. 「[테스트 환경(staging)](#테스트-환경staging)」 참고 |
 
 `StandinRegistry`와 `StandinCicd`는 **두 환경이 공유한다.** ECR을 나누지 않는 이유는, staging에서 검증한 그 이미지 SHA를 그대로 프로덕션에 올려야 검증이 의미가 있기 때문이다 — 저장소가 갈리면 "staging에서 통과한 이미지"와 "프로덕션에 올라간 이미지"가 다른 빌드일 수 있다.
@@ -555,6 +555,31 @@ aws logs describe-log-groups --profile standin-viewer --query 'logGroups[].logGr
 aws logs tail <그룹 이름> --since 30m --follow --profile standin-viewer
 aws s3 ls s3://<BetaDataBucketName>/ --profile standin-viewer
 ```
+
+#### 인프라 담당자 권한 (관리자)
+
+인프라 전체를 맡는 사람은 `standin-infra-admin` 그룹에 넣는다(출력 `InfraAdminGroupName`).
+그룹에는 AWS 관리형 정책 `AdministratorAccess`가 붙어 있다. `cdk deploy`가 IAM 역할·정책까지
+만들고, 시크릿 교체·모든 서비스 재배포·팀원 IAM 발급까지 해야 해서 좁은 정책으로는 막힌다.
+
+그룹은 CDK가 만들고 **멤버는 CLI로 관리한다** — 위 두 정책과 같은 원칙이다. 이 계정은 SSO를
+쓸 수 없으므로 사람마다 콘솔 IAM 사용자를 둔다(「팀원 조회 권한」 참고).
+
+- 이미 IAM 사용자가 있으면 그룹에만 넣는다. 붙어 있던 `standin-inference-operator`·`standin-team-viewer`는 관리자 권한에 포함되므로 떼도 되고 둬도 된다
+- 없으면 「팀원 조회 권한」의 `create-user`·`create-login-profile`로 만든 뒤 그룹에 넣는다
+- **MFA를 반드시 등록하게 한다.** 이 그룹은 계정 전체를 바꿀 수 있다
+- **액세스 키는 만들지 않는다.** CLI는 콘솔 로그인으로 자격증명을 받는 `aws login`(AWS CLI v2 최신)을 쓴다
+
+```bash
+aws iam add-user-to-group --group-name standin-infra-admin --user-name <이름>
+aws iam get-group --group-name standin-infra-admin --query 'Users[].UserName'
+
+# 담당자 본인 PC에서
+aws login --profile standin-admin
+aws sts get-caller-identity --profile standin-admin
+```
+
+빼는 것은 `aws iam remove-user-from-group --group-name standin-infra-admin --user-name <이름>`.
 
 ### 3. 소셜 로그인 키
 

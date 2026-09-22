@@ -1172,6 +1172,23 @@ export class AppStack extends Stack {
       ],
     });
 
+    // ── 인프라 담당자 그룹 ───────────────────────────────────────
+    // `cdk deploy`(IAM 역할·정책 생성 포함), 시크릿 교체, 모든 서비스 재배포, 팀원 IAM
+    // 사용자 발급까지 해야 하는 사람용이다. 그 범위를 좁은 정책으로 나열하면 CDK가 새
+    // 리소스 종류를 쓸 때마다 배포가 막히므로 AdministratorAccess를 그대로 쓴다.
+    //
+    // 위 두 정책과 같은 원칙으로 사람은 이 스택에서 만들지 않는다. 멤버는 CLI로
+    // 넣고 뺀다(README 「인프라 담당자 권한」). 이름을 틀리면 스택 배포 전체가 실패하고,
+    // 멤버 교체 때마다 인프라 PR을 거칠 이유도 없다.
+    //
+    // IAM은 계정 단위이고 staging도 같은 계정이라 프로덕션 스택에서만 한 번 만든다.
+    const infraAdminGroup = isPrimary
+      ? new iam.Group(this, "InfraAdminGroup", {
+          groupName: "standin-infra-admin",
+          managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess")],
+        })
+      : undefined;
+
     new cloudwatch.Alarm(this, "AnalysisQueueAgeAlarm", {
       metric: analysisQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1) }),
       threshold: 120,
@@ -1374,5 +1391,11 @@ export class AppStack extends Stack {
       value: teamViewerPolicy.managedPolicyArn,
       description: "팀원 권한 세트에 연결할 읽기 전용 정책(서비스 로그 + S3 버킷)",
     });
+    if (infraAdminGroup) {
+      new CfnOutput(this, "InfraAdminGroupName", {
+        value: infraAdminGroup.groupName,
+        description: "인프라 담당자 IAM 사용자를 넣을 그룹(AdministratorAccess)",
+      });
+    }
     }
 }

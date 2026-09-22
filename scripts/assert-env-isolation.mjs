@@ -23,6 +23,7 @@ const UNIQUE_NAME_PROPS = {
   "AWS::KMS::Alias": ["AliasName"],
   "AWS::IAM::ManagedPolicy": ["ManagedPolicyName"],
   "AWS::IAM::Role": ["RoleName"],
+  "AWS::IAM::Group": ["GroupName"],
   "AWS::ECR::Repository": ["RepositoryName"],
   "AWS::SQS::Queue": ["QueueName"],
   "AWS::S3::Bucket": ["BucketName"],
