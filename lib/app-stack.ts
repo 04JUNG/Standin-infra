@@ -367,6 +367,24 @@ export class AppStack extends Stack {
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
 
+    // 라이브러리 공백 분석용 비식별 export(`GET /v1/admin/gaps/observations`).
+    // - hmacKey: export 커서 서명과, export마다 새로 만드는 가명 salt의 유도에 쓴다.
+    //   가명은 같은 export 안에서만 같고 export끼리는 연결되지 않는다.
+    // - reviewers: export를 받을 수 있는 검토자 이름(쉼표 구분, beta-review-token JSON의 키).
+    //   공개 저장소라 이름은 코드에 두지 않고 콘솔에서 채운다. 비어 있으면 아무도 받지 못한다.
+    // 키가 비어 있으면 BFF가 이 엔드포인트만 503으로 닫으므로 인프라와 앱의 배포 순서는 상관없다.
+    // ⚠ reviewers를 바꾼 뒤에는 BFF 태스크를 새로 띄워야 반영된다(ECS가 기동 때 읽는다).
+    const gapExportSecret = new secretsmanager.Secret(this, "GapExportSecret", {
+      secretName: `standin/${envSegment}/gap-export`,
+      description: "HMAC key and allowed reviewers for the de-identified gap observation export",
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ reviewers: "" }),
+        generateStringKey: "hmacKey",
+        passwordLength: 64,
+        excludePunctuation: true,
+      },
+    });
+
     // 이메일 인증용 SMTP 설정. 공급자(Gmail·SES SMTP 등)는 배포 후 콘솔에서 채운다.
     // ECS가 JSON 키를 시작 시 해석하므로 값이 비어 있어도 모든 키를 미리 만든다.
     const smtpSecret = new secretsmanager.Secret(this, "SmtpSecret", {
@@ -902,6 +920,8 @@ export class AppStack extends Stack {
         JWT_SECRET: ecs.Secret.fromSecretsManager(jwtSecret),
         BETA_REVIEW_ADMIN_TOKEN: ecs.Secret.fromSecretsManager(betaReviewSecret),
         IP_HASH_SALT: ecs.Secret.fromSecretsManager(ipHashSalt),
+        GAP_EXPORT_HMAC_KEY: ecs.Secret.fromSecretsManager(gapExportSecret, "hmacKey"),
+        GAP_EXPORT_REVIEWERS: ecs.Secret.fromSecretsManager(gapExportSecret, "reviewers"),
         PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
         PGPORT: ecs.Secret.fromSecretsManager(database.secret!, "port"),
         PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
