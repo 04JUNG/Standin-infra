@@ -156,7 +156,7 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 | | 프로덕션 | staging |
 |---|---|---|
 | 먼저 배포된 것 (`jwt`·`db`·`oauth`·`smtp`·`discord`·`vlm`) | `standin/jwt` — **구분자 없음** | `standin/staging/jwt` |
-| 나중에 추가된 것 (`beta-review-token`·`ip-hash-salt`) | `standin/production/beta-review-token` | `standin/staging/beta-review-token` |
+| 나중에 추가된 것 (`beta-review-token`·`ip-hash-salt`·`gap-export`) | `standin/production/beta-review-token` | `standin/staging/beta-review-token` |
 
 프로덕션 구분자는 `envName`(`prod`)이 아니라 **`appEnv`(`production`)**다. `prod`로 적으면
 `ResourceNotFoundException`이 난다. 실제 이름은 이렇게 확인한다.
@@ -164,6 +164,21 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 ```bash
 aws secretsmanager list-secrets --region ap-northeast-2 --query "SecretList[].Name" --output text
 ```
+
+### 공백 관측 export 시크릿 (`standin/<env>/gap-export`)
+
+라이브러리에 맞는 포즈가 없던 사례를 모으는 비식별 export(`GET /v1/admin/gaps/observations`,
+`Standin-app-server/docs/API.md`)가 쓴다. BFF API 컨테이너에만 주입된다.
+
+| 키 | ECS 환경변수 | 값 |
+|---|---|---|
+| `hmacKey` | `GAP_EXPORT_HMAC_KEY` | 자동 생성. 커서 서명과 export별 가명 salt 유도에 쓴다 |
+| `reviewers` | `GAP_EXPORT_REVIEWERS` | export를 받을 검토자 이름, 쉼표 구분. `beta-review-token` JSON의 키와 같아야 한다 |
+
+- `reviewers`는 처음에 비어 있고, 비어 있으면 아무도 export를 받지 못한다. 이 저장소가
+  공개라서 이름을 코드에 두지 않는다. 콘솔에서 채운 뒤 BFF 서비스를 새로 띄워야 반영된다.
+- `hmacKey`를 바꾸면 진행 중인 export의 커서만 무효가 된다. 가명은 export마다 새로 만들므로,
+  예전 export와 연결되지 않는 것은 키를 바꾸지 않아도 마찬가지다.
 
 ## cdk.json은 배포 상태의 사본이다
 
