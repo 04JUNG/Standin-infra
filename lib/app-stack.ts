@@ -1049,6 +1049,10 @@ export class AppStack extends Stack {
               // (config/characters.example.json). 캐릭터를 추가하면 여기도 한 줄 는다.
               STANDIN_MASTER_V2_URI: `s3://${assets.bucketName}/characters/standin-master-v2.fbx`,
               STANDIN_FEMALE_V2_LBS_URI: `s3://${assets.bucketName}/characters/standin-female-v2-lbs.fbx`,
+              // Precomputed library surfaces; read-only, no Blender on candidate requests.
+              ...(props.envName === "staging"
+                ? { POSE_PREVIEW_URI: `s3://${assets.bucketName}/pose-previews` }
+                : {}),
               // `CONVERTER_CHARACTER_REGISTRY`는 일부러 두지 않는다 — 이미지 기본값이
               // 레지스트리 경로를 안다. 여기서 경로를 굳히면 이미지가 그 파일을 옮길 때
               // 인프라가 먼저 깨진다.
