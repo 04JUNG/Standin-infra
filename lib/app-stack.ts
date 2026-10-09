@@ -863,7 +863,17 @@ export class AppStack extends Stack {
          * 추론 → BFF 순으로 켠다.
          */
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
-        REFINE_TIMEOUT_MS: "5000",
+        /**
+         * BFF가 추론 `/refine`을 기다리는 상한. 추론 solver 예산(`REFINE_TIMEOUT_SECONDS`
+         * 기본 5.0초)보다 **반드시 커야 한다**(BFF `config.ts` 주석). 같으면 solver가 예산을
+         * 끝까지 쓴 정상 응답이 네트워크·직렬화 시간만큼 늦게 도착해 BFF가 먼저 끊고,
+         * 사용자에게는 조정 실패(`upstream_unavailable`)로 보인다.
+         *
+         * ⚠ 2026-10-08 staging: 5000으로 두었을 때 refine이 5.003초·5.005초에 끊겼다.
+         *   당시엔 추론이 미리보기까지 그려(20초) 더 심했고, 미리보기는 BFF가 따로 그리도록
+         *   바꿨다(Standin-app-server #76). 남은 몫은 solver 5초 + 여유다.
+         */
+        REFINE_TIMEOUT_MS: "9000",
         /**
          * FBX 저장 노출 스위치. converter 서비스 존재와 **별도**다.
          *
