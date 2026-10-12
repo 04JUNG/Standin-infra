@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import type { BodyAssetsRelease } from "../lib/body-assets";
 import { RegistryStack } from "../lib/registry-stack";
 import { AppStack } from "../lib/app-stack";
 import { CicdStack } from "../lib/cicd-stack";
@@ -31,6 +34,10 @@ const envName = (app.node.tryGetContext("envName") as string) === "staging"
   ? ("staging" as const)
   : ("prod" as const);
 const isStaging = envName === "staging";
+
+const bodyAssets: BodyAssetsRelease | undefined = isStaging && booleanContext("stagingBodyAssetsEnabled", true)
+  ? JSON.parse(readFileSync(path.join(__dirname, '..', 'config', 'staging-body-assets.json'), 'utf8'))
+  : undefined;
 
 const githubOrg = app.node.tryGetContext("githubOrg") as string;
 const githubRepos = app.node.tryGetContext("githubRepos") as string[];
@@ -259,6 +266,7 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   imageTag,
   logShipping,
   logRetentionDays,
+  bodyAssets,
 });
 
 cdk.Tags.of(app).add("Project", "Standin");
