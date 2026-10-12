@@ -22,40 +22,42 @@ aws cloudformation describe-stacks \
   --output table
 ```
 
-IAM Identity Center에서 추론 팀 그룹용 권한 세트를 만들고, 출력된
-`InferenceOperatorPolicyArn`의 고객 관리형 정책 `standin-inference-operator`를 연결합니다.
-그룹에 AWS 계정과 권한 세트를 할당한 뒤 담당자에게 다음 정보만 전달합니다.
+담당자에게 IAM 사용자를 만들고 출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책
+`standin-inference-operator`를 연결합니다. 이 계정은 조직 SCP가 `sso:*`를 막아
+IAM Identity Center를 쓸 수 없으므로, 업로드 스크립트를 직접 돌리는 담당자에게는
+액세스 키를 발급합니다. 발급·삭제 규칙은 인프라 README 「추론 서버 담당자 IAM 설정」에
+있습니다. 담당자에게 전달할 것은 다음과 같습니다.
 
-- SSO 시작 URL과 SSO 리전
-- AWS 계정과 권한 세트 이름
+- 액세스 키 ID와 비밀 액세스 키 (비밀값은 발급 때 한 번만 보입니다)
 - `InferenceLogGroupName` (로그를 볼 때만 필요합니다. 4장 참고)
 
 버킷·클러스터·서비스 이름은 스크립트에 기본값으로 들어 있어 담당자가 외울 필요가 없습니다.
 스택을 다시 만들어 이름이 바뀌었다면 위 명령의 출력값을 담당자에게 알려주고, 담당자는
 환경변수로 덮어씁니다(맨 아래 '이름이 바뀐 경우' 참고).
 
-사람별 IAM 사용자 또는 장기 Access Key와 Secret Access Key는 만들거나 전달하지 않습니다.
+키는 만료가 없습니다. 담당이 바뀌거나 쓰지 않게 되면 그날 삭제하고 README의 「현재 발급」
+표를 고칩니다.
 
 ## 1. 최초 1회 설정
 
-### SSO 로그인
+### 프로필 설정
 
-관리자에게 전달받은 SSO 정보로 프로필을 설정합니다. 프로필 이름은 스크립트 기본값과
+관리자에게 전달받은 액세스 키로 프로필을 만듭니다. 프로필 이름은 스크립트 기본값과
 같은 `standin-inference`로 만듭니다.
 
 ```bash
-aws configure sso --profile standin-inference
+aws configure --profile standin-inference
 ```
 
-안내에 따라 SSO 시작 URL, SSO 리전, AWS 계정과 권한 세트를 선택하고 기본 리전은
-`ap-northeast-2`로 설정합니다. 설정이 끝나면 로그인하고 현재 자격증명을 확인합니다.
+액세스 키 ID와 비밀 액세스 키를 넣고 기본 리전은 `ap-northeast-2`, 출력 형식은 `json`으로
+설정합니다. 끝나면 현재 자격증명을 확인합니다.
 
 ```bash
-aws sso login --profile standin-inference
 aws sts get-caller-identity --profile standin-inference
 ```
 
-세션이 만료되면 `aws sso login --profile standin-inference`를 다시 실행합니다.
+키는 `~/.aws/credentials`에 저장됩니다. 이 파일을 저장소·채팅·문서에 올리지 않습니다.
+콘솔에도 로그인한다면 첫 로그인 뒤 MFA를 등록합니다.
 
 ### 스크립트 준비
 
@@ -82,7 +84,6 @@ npx cdk deploy StandinApp -c appEnv=production
 `data` 폴더에 `poses.db`, `bvh/`, `thumbs/`가 있다고 가정합니다.
 
 ```bash
-aws sso login --profile standin-inference     # 세션이 살아 있으면 생략
 python scripts/deploy_pose_library.py data/
 ```
 
