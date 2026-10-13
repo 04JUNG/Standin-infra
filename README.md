@@ -583,6 +583,23 @@ aws logs tail <그룹 이름> --since 30m --follow --profile standin-viewer
 aws s3 ls s3://<BetaDataBucketName>/ --profile standin-viewer
 ```
 
+#### 본인 MFA는 본인이 등록한다
+
+운영·조회 정책에는 IAM 권한이 없다. 그래서 사용자가 콘솔 「보안 자격 증명」에서 MFA를
+등록하려 하면 `iam:ListMFADevices`부터 거부되고 **등록 버튼 자체가 보이지 않는다.**
+사용자를 만들 때 `standin-self-manage-credentials`(출력 `SelfManageCredentialsPolicyArn`)를
+같이 붙인다.
+
+```bash
+aws iam attach-user-policy --user-name <이름> \
+  --policy-arn arn:aws:iam::136889124221:policy/standin-self-manage-credentials
+```
+
+- 본인 것만 열린다. 범위는 `${aws:username}`으로 갈린다
+- **가상 MFA 장치 이름은 사용자 이름으로 시작해야 한다**(콘솔 기본값 그대로 두면 된다)
+- MFA 해제는 MFA로 로그인한 세션에서만 된다. 기기를 잃으면 관리자가 떼 준다 —
+  `aws iam deactivate-mfa-device` → `aws iam delete-virtual-mfa-device`
+
 #### 누가 무엇을 갖고 있나
 
 **이 저장소는 공개다.** 사람별 권한·키·MFA 현황은 여기 적지 않고 비공개 문서
