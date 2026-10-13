@@ -498,16 +498,29 @@ aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 BFF·worker·RDS 로그 그룹은 열지 않는다 — 사용자 데이터가 흐른다. 다른 그룹은 이름만
 보이고(`logs:DescribeLogGroups`, 콘솔 목록용) 내용은 열리지 않는다.
 
-사람별 IAM 사용자나 장기 액세스 키를 새로 만들지 말고, IAM Identity Center에서 추론 팀
-그룹용 권한 세트를 만든 뒤 출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책
-`standin-inference-operator`를 연결한다. 기존 사내 운영 역할을 쓰는 경우에는 그 역할에
-같은 정책을 연결해도 된다.
+출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책 `standin-inference-operator`를
+담당자에게 연결한다. 기존 사내 운영 역할을 쓰는 경우에는 그 역할에 붙여도 된다.
 
-담당자는 SSO로 로그인한 뒤 번들을 업로드하고 추론 서비스만 새로 배포한다.
+**⚠ 이 계정에서는 IAM Identity Center를 쓸 수 없다**(「팀원 조회 권한」 참고). 그래서
+담당자에게도 사람별 IAM 사용자를 만들고, 업로드 스크립트가 CLI로 도는 만큼 **액세스 키를
+발급한다.** 원래 원칙은 장기 키를 만들지 않는 것이지만, 이 계정에서는 SSO가 막혀 있어
+대안이 없다. 대신 아래를 지킨다.
+
+- 키는 **업로드 스크립트를 직접 돌리는 사람에게만** 준다. 콘솔로 충분한 사람은 비밀번호만 준다
+- MFA를 등록하게 한다. 키가 있어도 콘솔 경로는 MFA로 막는다
+- 담당이 바뀌거나 쓰지 않게 되면 **그날 삭제한다**(`aws iam delete-access-key`)
+- 분기마다 명부(「누가 무엇을 갖고 있나」)와 대조해 남은 키를 점검한다
 
 ```bash
-aws configure sso --profile standin-inference    # 최초 1회
-aws sso login --profile standin-inference
+aws iam create-access-key --user-name <이름>   # 비밀값은 이때 한 번만 보인다
+aws iam list-access-keys --user-name <이름>
+aws iam delete-access-key --user-name <이름> --access-key-id <키 ID>
+```
+
+담당자는 받은 키로 프로필을 만든 뒤 번들을 업로드하고 추론 서비스만 새로 배포한다.
+
+```bash
+aws configure --profile standin-inference        # 최초 1회, 리전 ap-northeast-2
 
 python scripts/deploy_pose_library.py data/      # 검증·업로드·재기동·확인
 python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
@@ -537,8 +550,9 @@ Innovation Sandbox 계정이고, 조직 SCP가 `sso:*`를 명시적으로 막는
 
 - 이름은 영문이다(IAM 이름에 한글 불가). 예: 동원 → `dongwon`
 - 연결 정책: `standin-team-viewer` + `IAMUserChangePassword`(첫 로그인 때 비밀번호 변경용)
-- **액세스 키는 만들지 않는다.** 콘솔 비밀번호만 켜고, 첫 로그인 뒤 MFA를 등록하게 한다
+- **조회만 하는 사람에게는 액세스 키를 만들지 않는다.** 콘솔 비밀번호만 켜고, 첫 로그인 뒤 MFA를 등록하게 한다. CLI가 필요하면 「추론 서버 담당자 IAM 설정」의 키 발급 규칙을 따른다
 - 로그인 주소: `https://136889124221.signin.aws.amazon.com/console`
+- 비밀번호를 잃어버리면 사용자를 새로 만들지 말고 재설정한다 — `aws iam update-login-profile --user-name <이름> --password '<임시 비밀번호>' --password-reset-required`
 
 ```bash
 aws iam create-user --user-name <이름> --tags Key=purpose,Value=standin-team-viewer
@@ -548,8 +562,6 @@ aws iam create-login-profile --user-name <이름> --password '<임시 비밀번�
 ```
 
 빼는 순서는 반대다 — `delete-login-profile` → 정책 `detach-user-policy` → MFA 해제 → `delete-user`.
-
-현재 발급: `dongwon`(2026-09-21).
 
 | 대상 | 허용 |
 |---|---|
@@ -565,11 +577,46 @@ aws iam create-login-profile --user-name <이름> --password '<임시 비밀번�
 보인다(아래 「토큰은 사람마다 다르게 준다」). 대시보드는 사람별 토큰으로 따로 연다.
 
 ```bash
-aws sso login --profile standin-viewer
+aws login --profile standin-viewer   # 콘솔 로그인으로 CLI 자격증명을 받는다
 aws logs describe-log-groups --profile standin-viewer --query 'logGroups[].logGroupName'
 aws logs tail <그룹 이름> --since 30m --follow --profile standin-viewer
 aws s3 ls s3://<BetaDataBucketName>/ --profile standin-viewer
 ```
+
+#### 본인 MFA는 본인이 등록한다
+
+운영·조회 정책에는 IAM 권한이 없다. 그래서 사용자가 콘솔 「보안 자격 증명」에서 MFA를
+등록하려 하면 `iam:ListMFADevices`부터 거부되고 **등록 버튼 자체가 보이지 않는다.**
+사용자를 만들 때 `standin-self-manage-credentials`(출력 `SelfManageCredentialsPolicyArn`)를
+같이 붙인다.
+
+```bash
+aws iam attach-user-policy --user-name <이름> \
+  --policy-arn arn:aws:iam::136889124221:policy/standin-self-manage-credentials
+```
+
+- 본인 것만 열린다. 범위는 `${aws:username}`으로 갈린다
+- **가상 MFA 장치 이름은 사용자 이름으로 시작해야 한다**(콘솔 기본값 그대로 두면 된다)
+- MFA 해제는 MFA로 로그인한 세션에서만 된다. 기기를 잃으면 관리자가 떼 준다 —
+  `aws iam deactivate-mfa-device` → `aws iam delete-virtual-mfa-device`
+
+#### 누가 무엇을 갖고 있나
+
+**이 저장소는 공개다.** 사람별 권한·키·MFA 현황은 여기 적지 않고 비공개 문서
+(master-docs `제품팀_인수인계/`)의 명부에서 관리한다. 사람을 추가·제거하거나 키를
+발급·삭제하면 그 명부를 같은 날 고친다.
+
+계정에서 직접 확인하는 명령은 다음과 같다.
+
+```bash
+aws iam list-users --query 'Users[].UserName'
+aws iam list-attached-user-policies --user-name <이름> --query 'AttachedPolicies[].PolicyName'
+aws iam list-access-keys --user-name <이름>
+aws iam list-mfa-devices --user-name <이름>
+```
+
+조회 전용 팀원에게 업로드 권한을 더할 때는 `standin-team-viewer`를 떼는 쪽이 좁다. 두
+정책을 함께 두면 업로드용 키로 `BetaDataBucket`(베타 사용자 입력)까지 읽을 수 있다.
 
 #### 인프라 담당자 권한 (관리자)
 

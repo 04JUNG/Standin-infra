@@ -1242,6 +1242,62 @@ export class AppStack extends Stack {
         })
       : undefined;
 
+    // ── 본인 자격증명 관리 ───────────────────────────────────────
+    // 운영·조회 정책에는 IAM 권한이 없어서, 사용자가 콘솔 「보안 자격 증명」에서 자기
+    // MFA를 등록하려 하면 `ListMFADevices`부터 거부된다(등록 버튼 자체가 안 보인다).
+    // 관리자가 대신 등록하려면 상대 휴대폰이 필요하므로, 본인 것만 다루게 열어 준다.
+    //
+    // 범위를 사람마다 가르는 장치가 `${aws:username}`이다. `mfa/*`로 열면 남의 가상 MFA
+    // 장치까지 만들고 지울 수 있다. 장치 이름은 사용자 이름으로 시작해야 한다(콘솔 기본값).
+    //
+    // DeactivateMFADevice만 MFA 세션을 요구한다. 열쇠를 훔친 쪽이 그 열쇠로 자물쇠를
+    // 떼는 것을 막는다. 사용자가 기기를 잃으면 관리자가 떼 준다.
+    const selfManageCredentialsPolicy = isPrimary
+      ? new iam.ManagedPolicy(this, "SelfManageCredentialsPolicy", {
+          managedPolicyName: "standin-self-manage-credentials",
+          // ⚠ Description은 교체를 강제한다(InferenceOperatorPolicy 주석 참고). 바꾸지 않는다.
+          description: "Let an IAM user view and manage only their own MFA and credentials",
+          statements: [
+            new iam.PolicyStatement({
+              sid: "ListOwnCredentials",
+              actions: [
+                "iam:GetUser",
+                "iam:GetLoginProfile",
+                "iam:ListMFADevices",
+                "iam:ListAccessKeys",
+                "iam:ListSigningCertificates",
+                "iam:ListSSHPublicKeys",
+                "iam:ListServiceSpecificCredentials",
+              ],
+              resources: ["arn:aws:iam::*:user/${aws:username}"],
+            }),
+            new iam.PolicyStatement({
+              // 콘솔 MFA 화면이 계정의 가상 장치 목록을 먼저 읽는다. 리소스 단위를
+              // 지원하지 않는 액션이라 `*`다. 장치 이름 외에 다른 정보는 없다.
+              sid: "ListVirtualMfaForConsole",
+              actions: ["iam:ListVirtualMFADevices"],
+              resources: ["*"],
+            }),
+            new iam.PolicyStatement({
+              sid: "ManageOwnVirtualMfaDevice",
+              actions: ["iam:CreateVirtualMFADevice", "iam:DeleteVirtualMFADevice"],
+              resources: ["arn:aws:iam::*:mfa/${aws:username}*"],
+            }),
+            new iam.PolicyStatement({
+              sid: "EnableOwnMfa",
+              actions: ["iam:EnableMFADevice", "iam:ResyncMFADevice"],
+              resources: ["arn:aws:iam::*:user/${aws:username}"],
+            }),
+            new iam.PolicyStatement({
+              sid: "DeactivateOwnMfaOnlyWithMfa",
+              actions: ["iam:DeactivateMFADevice"],
+              resources: ["arn:aws:iam::*:user/${aws:username}"],
+              conditions: { BoolIfExists: { "aws:MultiFactorAuthPresent": "true" } },
+            }),
+          ],
+        })
+      : undefined;
+
     new cloudwatch.Alarm(this, "AnalysisQueueAgeAlarm", {
       metric: analysisQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1) }),
       threshold: 120,
@@ -1447,11 +1503,17 @@ export class AppStack extends Stack {
       value: teamViewerPolicy.managedPolicyArn,
       description: "팀원 권한 세트에 연결할 읽기 전용 정책(서비스 로그 + S3 버킷)",
     });
+    if (selfManageCredentialsPolicy) {
+      new CfnOutput(this, "SelfManageCredentialsPolicyArn", {
+        value: selfManageCredentialsPolicy.managedPolicyArn,
+        description: "사람 IAM 사용자에게 붙이는 본인 MFA·자격증명 관리 정책",
+      });
+    }
     if (infraAdminGroup) {
       new CfnOutput(this, "InfraAdminGroupName", {
         value: infraAdminGroup.groupName,
         description: "인프라 담당자 IAM 사용자를 넣을 그룹(AdministratorAccess)",
       });
     }
-    }
+  }
 }
