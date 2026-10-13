@@ -14,3 +14,5 @@ cdk.out-*/
 # 시크릿 — 절대 커밋 금지
 .env
 .env.*
+__pycache__/
+*.py[cod]

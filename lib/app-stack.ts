@@ -15,9 +15,12 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
 import type { Construct } from "constructs";
 
 export interface AppStackProps extends StackProps {
+  /** Pinned staging body release. Production has no body asset initializer. */
+  bodyAssets?: BodyAssetsRelease;
   /**
    * 배포 대상 환경. 물리 이름(시크릿·KMS 별칭·IAM 정책·Cloud Map)의 유일성을 만든다.
    *
@@ -530,6 +533,7 @@ export class AppStack extends Stack {
     const inferenceLogging = containerLogging(inferenceTask, "inference");
 
     inferenceTask.addContainer("inference", {
+      startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
       image: ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, props.imageTag),
       logging: inferenceLogging,
       environment: {
@@ -646,6 +650,11 @@ export class AppStack extends Stack {
 
     // 번들을 받으려면 읽기 권한이 필요하다(태스크 역할 → 키를 환경에 두지 않는다).
     assets.grantRead(inferenceTask.taskRole);
+    if (props.bodyAssets) {
+      if (props.envName !== 'staging' || !props.converterEnabled || !props.fbxExportEnabled) throw new Error('body release requires staging converter and FBX export');
+      configureBodyAssets(inferenceTask, inferenceTask.findContainer('inference')!, assets,
+        ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, props.imageTag), props.bodyAssets, 'inference');
+    }
 
     // awslogs 드라이버는 컨테이너에 바인딩된 **뒤에야** 로그 그룹을 노출한다.
     // firelens 모드에서는 로그가 CloudWatch에 남지 않으므로 그룹도 없다(undefined).
@@ -839,6 +848,7 @@ export class AppStack extends Stack {
     betaData.grantReadWrite(bffTask.taskRole);
 
     bffTask.addContainer("bff", {
+      startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
       image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag),
       logging: containerLogging(bffTask, "bff"),
       environment: {
@@ -896,7 +906,7 @@ export class AppStack extends Stack {
                *
                * converter 자신의 상한(60초)보다 넉넉해야 대기까지 흡수한다.
                */
-              CONVERTER_TIMEOUT_MS: "90000",
+              CONVERTER_TIMEOUT_MS: props.bodyAssets ? "120000" : "90000",
             }
           : {}),
         BETA_CONSENT_VERSION: "2026-08-02",
@@ -969,6 +979,9 @@ export class AppStack extends Stack {
       healthCheckGracePeriod: Duration.seconds(60),
     });
 
+    if (props.bodyAssets) configureBodyAssets(bffTask, bffTask.findContainer('bff')!, assets,
+      ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag), props.bodyAssets, 'bff');
+
     // HTTP 수신과 분리된 영속 Job worker. inline 단계에서는 서비스만 만들고 0개로 둔다.
     const workerTask = new ecs.FargateTaskDefinition(this, "AnalysisWorkerTask", {
       cpu: 512,
@@ -979,6 +992,7 @@ export class AppStack extends Stack {
       },
     });
     workerTask.addContainer("analysis-worker", {
+      startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
       image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag),
       command: ["node", "dist/worker.js"],
       stopTimeout: Duration.seconds(120),
@@ -1009,6 +1023,8 @@ export class AppStack extends Stack {
         DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
       },
     });
+    if (props.bodyAssets) configureBodyAssets(workerTask, workerTask.findContainer('analysis-worker')!, assets,
+      ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag), props.bodyAssets, 'bff');
     betaData.grantRead(workerTask.taskRole);
     analysisQueue.grantConsumeMessages(workerTask.taskRole);
 
@@ -1034,8 +1050,8 @@ export class AppStack extends Stack {
     const converterService = props.converterEnabled
       ? (() => {
           const converterTask = new ecs.FargateTaskDefinition(this, "ConverterTask", {
-            cpu: 1024,
-            memoryLimitMiB: 2048,
+            cpu: props.bodyAssets ? 2048 : 1024,
+            memoryLimitMiB: props.bodyAssets ? 4096 : 2048,
             runtimePlatform: {
               // ⚠ Dockerfile.converter가 amd64를 강제한다(Blender 배포판이 x64뿐이다).
               cpuArchitecture: ecs.CpuArchitecture.X86_64,
@@ -1044,6 +1060,7 @@ export class AppStack extends Stack {
           });
 
           converterTask.addContainer("converter", {
+            startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
             image: ecs.ContainerImage.fromEcrRepository(
               props.converterRepo,
               props.converterImageTag,
@@ -1075,7 +1092,7 @@ export class AppStack extends Stack {
                * `standin-master-v2`(1.72 MB)로는 **한 건에 18~35초**가 걸린다. 30초는
                * 정상 변환을 자르는 값이다. staging 실측(2026-09-03)에 맞춰 올린다.
                */
-              CONVERTER_TIMEOUT_SECONDS: "60",
+              CONVERTER_TIMEOUT_SECONDS: props.bodyAssets ? "90" : "60",
               CONVERTER_TERMINATE_GRACE_SECONDS: "2",
               // 1을 유지한다. 올리면 Blender 프로세스가 동시에 떠 메모리가 배로 든다.
               CONVERTER_MAX_CONCURRENT_PROCESSES: "1",
@@ -1108,6 +1125,8 @@ export class AppStack extends Stack {
 
           // 캐릭터 아티팩트를 받으려면 읽기 권한이 필요하다(키를 환경에 두지 않는다).
           assets.grantRead(converterTask.taskRole);
+          if (props.bodyAssets) configureBodyAssets(converterTask, converterTask.findContainer('converter')!, assets,
+            ecs.ContainerImage.fromEcrRepository(props.converterRepo, props.converterImageTag), props.bodyAssets, 'converter');
 
           return new ecs.FargateService(this, "ConverterService", {
             cluster,
