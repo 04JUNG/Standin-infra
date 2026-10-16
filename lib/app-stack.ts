@@ -15,9 +15,12 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
 import type { Construct } from "constructs";
 
 export interface AppStackProps extends StackProps {
+  /** Pinned staging body release. Production has no body asset initializer. */
+  bodyAssets?: BodyAssetsRelease;
   /**
    * 배포 대상 환경. 물리 이름(시크릿·KMS 별칭·IAM 정책·Cloud Map)의 유일성을 만든다.
    *
@@ -367,6 +370,24 @@ export class AppStack extends Stack {
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
 
+    // 라이브러리 공백 분석용 비식별 export(`GET /v1/admin/gaps/observations`).
+    // - hmacKey: export 커서 서명과, export마다 새로 만드는 가명 salt의 유도에 쓴다.
+    //   가명은 같은 export 안에서만 같고 export끼리는 연결되지 않는다.
+    // - reviewers: export를 받을 수 있는 검토자 이름(쉼표 구분, beta-review-token JSON의 키).
+    //   공개 저장소라 이름은 코드에 두지 않고 콘솔에서 채운다. 비어 있으면 아무도 받지 못한다.
+    // 키가 비어 있으면 BFF가 이 엔드포인트만 503으로 닫으므로 인프라와 앱의 배포 순서는 상관없다.
+    // ⚠ reviewers를 바꾼 뒤에는 BFF 태스크를 새로 띄워야 반영된다(ECS가 기동 때 읽는다).
+    const gapExportSecret = new secretsmanager.Secret(this, "GapExportSecret", {
+      secretName: `standin/${envSegment}/gap-export`,
+      description: "HMAC key and allowed reviewers for the de-identified gap observation export",
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ reviewers: "" }),
+        generateStringKey: "hmacKey",
+        passwordLength: 64,
+        excludePunctuation: true,
+      },
+    });
+
     // 이메일 인증용 SMTP 설정. 공급자(Gmail·SES SMTP 등)는 배포 후 콘솔에서 채운다.
     // ECS가 JSON 키를 시작 시 해석하므로 값이 비어 있어도 모든 키를 미리 만든다.
     const smtpSecret = new secretsmanager.Secret(this, "SmtpSecret", {
@@ -512,6 +533,7 @@ export class AppStack extends Stack {
     const inferenceLogging = containerLogging(inferenceTask, "inference");
 
     inferenceTask.addContainer("inference", {
+      startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
       image: ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, props.imageTag),
       logging: inferenceLogging,
       environment: {
@@ -628,6 +650,11 @@ export class AppStack extends Stack {
 
     // 번들을 받으려면 읽기 권한이 필요하다(태스크 역할 → 키를 환경에 두지 않는다).
     assets.grantRead(inferenceTask.taskRole);
+    if (props.bodyAssets) {
+      if (props.envName !== 'staging' || !props.converterEnabled || !props.fbxExportEnabled) throw new Error('body release requires staging converter and FBX export');
+      configureBodyAssets(inferenceTask, inferenceTask.findContainer('inference')!, assets,
+        ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, props.imageTag), props.bodyAssets, 'inference');
+    }
 
     // awslogs 드라이버는 컨테이너에 바인딩된 **뒤에야** 로그 그룹을 노출한다.
     // firelens 모드에서는 로그가 CloudWatch에 남지 않으므로 그룹도 없다(undefined).
@@ -821,6 +848,7 @@ export class AppStack extends Stack {
     betaData.grantReadWrite(bffTask.taskRole);
 
     bffTask.addContainer("bff", {
+      startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
       image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag),
       logging: containerLogging(bffTask, "bff"),
       environment: {
@@ -845,7 +873,17 @@ export class AppStack extends Stack {
          * 추론 → BFF 순으로 켠다.
          */
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
-        REFINE_TIMEOUT_MS: "5000",
+        /**
+         * BFF가 추론 `/refine`을 기다리는 상한. 추론 solver 예산(`REFINE_TIMEOUT_SECONDS`
+         * 기본 5.0초)보다 **반드시 커야 한다**(BFF `config.ts` 주석). 같으면 solver가 예산을
+         * 끝까지 쓴 정상 응답이 네트워크·직렬화 시간만큼 늦게 도착해 BFF가 먼저 끊고,
+         * 사용자에게는 조정 실패(`upstream_unavailable`)로 보인다.
+         *
+         * ⚠ 2026-10-08 staging: 5000으로 두었을 때 refine이 5.003초·5.005초에 끊겼다.
+         *   당시엔 추론이 미리보기까지 그려(20초) 더 심했고, 미리보기는 BFF가 따로 그리도록
+         *   바꿨다(Standin-app-server #76). 남은 몫은 solver 5초 + 여유다.
+         */
+        REFINE_TIMEOUT_MS: "9000",
         /**
          * FBX 저장 노출 스위치. converter 서비스 존재와 **별도**다.
          *
@@ -868,7 +906,7 @@ export class AppStack extends Stack {
                *
                * converter 자신의 상한(60초)보다 넉넉해야 대기까지 흡수한다.
                */
-              CONVERTER_TIMEOUT_MS: "90000",
+              CONVERTER_TIMEOUT_MS: props.bodyAssets ? "120000" : "90000",
             }
           : {}),
         BETA_CONSENT_VERSION: "2026-08-02",
@@ -902,6 +940,8 @@ export class AppStack extends Stack {
         JWT_SECRET: ecs.Secret.fromSecretsManager(jwtSecret),
         BETA_REVIEW_ADMIN_TOKEN: ecs.Secret.fromSecretsManager(betaReviewSecret),
         IP_HASH_SALT: ecs.Secret.fromSecretsManager(ipHashSalt),
+        GAP_EXPORT_HMAC_KEY: ecs.Secret.fromSecretsManager(gapExportSecret, "hmacKey"),
+        GAP_EXPORT_REVIEWERS: ecs.Secret.fromSecretsManager(gapExportSecret, "reviewers"),
         PGHOST: ecs.Secret.fromSecretsManager(database.secret!, "host"),
         PGPORT: ecs.Secret.fromSecretsManager(database.secret!, "port"),
         PGUSER: ecs.Secret.fromSecretsManager(database.secret!, "username"),
@@ -939,6 +979,9 @@ export class AppStack extends Stack {
       healthCheckGracePeriod: Duration.seconds(60),
     });
 
+    if (props.bodyAssets) configureBodyAssets(bffTask, bffTask.findContainer('bff')!, assets,
+      ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag), props.bodyAssets, 'bff');
+
     // HTTP 수신과 분리된 영속 Job worker. inline 단계에서는 서비스만 만들고 0개로 둔다.
     const workerTask = new ecs.FargateTaskDefinition(this, "AnalysisWorkerTask", {
       cpu: 512,
@@ -949,6 +992,7 @@ export class AppStack extends Stack {
       },
     });
     workerTask.addContainer("analysis-worker", {
+      startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
       image: ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag),
       command: ["node", "dist/worker.js"],
       stopTimeout: Duration.seconds(120),
@@ -979,6 +1023,8 @@ export class AppStack extends Stack {
         DISCORD_WEBHOOK_OPS: ecs.Secret.fromSecretsManager(discordSecret, "webhookOps"),
       },
     });
+    if (props.bodyAssets) configureBodyAssets(workerTask, workerTask.findContainer('analysis-worker')!, assets,
+      ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag), props.bodyAssets, 'bff');
     betaData.grantRead(workerTask.taskRole);
     analysisQueue.grantConsumeMessages(workerTask.taskRole);
 
@@ -1004,8 +1050,8 @@ export class AppStack extends Stack {
     const converterService = props.converterEnabled
       ? (() => {
           const converterTask = new ecs.FargateTaskDefinition(this, "ConverterTask", {
-            cpu: 1024,
-            memoryLimitMiB: 2048,
+            cpu: props.bodyAssets ? 2048 : 1024,
+            memoryLimitMiB: props.bodyAssets ? 4096 : 2048,
             runtimePlatform: {
               // ⚠ Dockerfile.converter가 amd64를 강제한다(Blender 배포판이 x64뿐이다).
               cpuArchitecture: ecs.CpuArchitecture.X86_64,
@@ -1014,6 +1060,7 @@ export class AppStack extends Stack {
           });
 
           converterTask.addContainer("converter", {
+            startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
             image: ecs.ContainerImage.fromEcrRepository(
               props.converterRepo,
               props.converterImageTag,
@@ -1029,6 +1076,10 @@ export class AppStack extends Stack {
               // (config/characters.example.json). 캐릭터를 추가하면 여기도 한 줄 는다.
               STANDIN_MASTER_V2_URI: `s3://${assets.bucketName}/characters/standin-master-v2.fbx`,
               STANDIN_FEMALE_V2_LBS_URI: `s3://${assets.bucketName}/characters/standin-female-v2-lbs.fbx`,
+              // Precomputed library surfaces; read-only, no Blender on candidate requests.
+              ...(props.envName === "staging"
+                ? { POSE_PREVIEW_URI: `s3://${assets.bucketName}/pose-previews` }
+                : {}),
               // `CONVERTER_CHARACTER_REGISTRY`는 일부러 두지 않는다 — 이미지 기본값이
               // 레지스트리 경로를 안다. 여기서 경로를 굳히면 이미지가 그 파일을 옮길 때
               // 인프라가 먼저 깨진다.
@@ -1041,7 +1092,7 @@ export class AppStack extends Stack {
                * `standin-master-v2`(1.72 MB)로는 **한 건에 18~35초**가 걸린다. 30초는
                * 정상 변환을 자르는 값이다. staging 실측(2026-09-03)에 맞춰 올린다.
                */
-              CONVERTER_TIMEOUT_SECONDS: "60",
+              CONVERTER_TIMEOUT_SECONDS: props.bodyAssets ? "90" : "60",
               CONVERTER_TERMINATE_GRACE_SECONDS: "2",
               // 1을 유지한다. 올리면 Blender 프로세스가 동시에 떠 메모리가 배로 든다.
               CONVERTER_MAX_CONCURRENT_PROCESSES: "1",
@@ -1074,6 +1125,8 @@ export class AppStack extends Stack {
 
           // 캐릭터 아티팩트를 받으려면 읽기 권한이 필요하다(키를 환경에 두지 않는다).
           assets.grantRead(converterTask.taskRole);
+          if (props.bodyAssets) configureBodyAssets(converterTask, converterTask.findContainer('converter')!, assets,
+            ecs.ContainerImage.fromEcrRepository(props.converterRepo, props.converterImageTag), props.bodyAssets, 'converter');
 
           return new ecs.FargateService(this, "ConverterService", {
             cluster,
@@ -1172,6 +1225,79 @@ export class AppStack extends Stack {
       ],
     });
 
+    // ── 인프라 담당자 그룹 ───────────────────────────────────────
+    // `cdk deploy`(IAM 역할·정책 생성 포함), 시크릿 교체, 모든 서비스 재배포, 팀원 IAM
+    // 사용자 발급까지 해야 하는 사람용이다. 그 범위를 좁은 정책으로 나열하면 CDK가 새
+    // 리소스 종류를 쓸 때마다 배포가 막히므로 AdministratorAccess를 그대로 쓴다.
+    //
+    // 위 두 정책과 같은 원칙으로 사람은 이 스택에서 만들지 않는다. 멤버는 CLI로
+    // 넣고 뺀다(README 「인프라 담당자 권한」). 이름을 틀리면 스택 배포 전체가 실패하고,
+    // 멤버 교체 때마다 인프라 PR을 거칠 이유도 없다.
+    //
+    // IAM은 계정 단위이고 staging도 같은 계정이라 프로덕션 스택에서만 한 번 만든다.
+    const infraAdminGroup = isPrimary
+      ? new iam.Group(this, "InfraAdminGroup", {
+          groupName: "standin-infra-admin",
+          managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess")],
+        })
+      : undefined;
+
+    // ── 본인 자격증명 관리 ───────────────────────────────────────
+    // 운영·조회 정책에는 IAM 권한이 없어서, 사용자가 콘솔 「보안 자격 증명」에서 자기
+    // MFA를 등록하려 하면 `ListMFADevices`부터 거부된다(등록 버튼 자체가 안 보인다).
+    // 관리자가 대신 등록하려면 상대 휴대폰이 필요하므로, 본인 것만 다루게 열어 준다.
+    //
+    // 범위를 사람마다 가르는 장치가 `${aws:username}`이다. `mfa/*`로 열면 남의 가상 MFA
+    // 장치까지 만들고 지울 수 있다. 장치 이름은 사용자 이름으로 시작해야 한다(콘솔 기본값).
+    //
+    // DeactivateMFADevice만 MFA 세션을 요구한다. 열쇠를 훔친 쪽이 그 열쇠로 자물쇠를
+    // 떼는 것을 막는다. 사용자가 기기를 잃으면 관리자가 떼 준다.
+    const selfManageCredentialsPolicy = isPrimary
+      ? new iam.ManagedPolicy(this, "SelfManageCredentialsPolicy", {
+          managedPolicyName: "standin-self-manage-credentials",
+          // ⚠ Description은 교체를 강제한다(InferenceOperatorPolicy 주석 참고). 바꾸지 않는다.
+          description: "Let an IAM user view and manage only their own MFA and credentials",
+          statements: [
+            new iam.PolicyStatement({
+              sid: "ListOwnCredentials",
+              actions: [
+                "iam:GetUser",
+                "iam:GetLoginProfile",
+                "iam:ListMFADevices",
+                "iam:ListAccessKeys",
+                "iam:ListSigningCertificates",
+                "iam:ListSSHPublicKeys",
+                "iam:ListServiceSpecificCredentials",
+              ],
+              resources: ["arn:aws:iam::*:user/${aws:username}"],
+            }),
+            new iam.PolicyStatement({
+              // 콘솔 MFA 화면이 계정의 가상 장치 목록을 먼저 읽는다. 리소스 단위를
+              // 지원하지 않는 액션이라 `*`다. 장치 이름 외에 다른 정보는 없다.
+              sid: "ListVirtualMfaForConsole",
+              actions: ["iam:ListVirtualMFADevices"],
+              resources: ["*"],
+            }),
+            new iam.PolicyStatement({
+              sid: "ManageOwnVirtualMfaDevice",
+              actions: ["iam:CreateVirtualMFADevice", "iam:DeleteVirtualMFADevice"],
+              resources: ["arn:aws:iam::*:mfa/${aws:username}*"],
+            }),
+            new iam.PolicyStatement({
+              sid: "EnableOwnMfa",
+              actions: ["iam:EnableMFADevice", "iam:ResyncMFADevice"],
+              resources: ["arn:aws:iam::*:user/${aws:username}"],
+            }),
+            new iam.PolicyStatement({
+              sid: "DeactivateOwnMfaOnlyWithMfa",
+              actions: ["iam:DeactivateMFADevice"],
+              resources: ["arn:aws:iam::*:user/${aws:username}"],
+              conditions: { BoolIfExists: { "aws:MultiFactorAuthPresent": "true" } },
+            }),
+          ],
+        })
+      : undefined;
+
     new cloudwatch.Alarm(this, "AnalysisQueueAgeAlarm", {
       metric: analysisQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1) }),
       threshold: 120,
@@ -1189,6 +1315,9 @@ export class AppStack extends Stack {
       vpc: vpc,
       internetFacing: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      // Aligned candidate renders have a bounded 300-second BFF request.
+      // Keep the staging connection alive long enough to return that result.
+      idleTimeout: Duration.seconds(props.envName === "staging" ? 330 : 60),
     });
 
     const httpsListener = alb.addListener("Https", {
@@ -1374,5 +1503,17 @@ export class AppStack extends Stack {
       value: teamViewerPolicy.managedPolicyArn,
       description: "팀원 권한 세트에 연결할 읽기 전용 정책(서비스 로그 + S3 버킷)",
     });
+    if (selfManageCredentialsPolicy) {
+      new CfnOutput(this, "SelfManageCredentialsPolicyArn", {
+        value: selfManageCredentialsPolicy.managedPolicyArn,
+        description: "사람 IAM 사용자에게 붙이는 본인 MFA·자격증명 관리 정책",
+      });
     }
+    if (infraAdminGroup) {
+      new CfnOutput(this, "InfraAdminGroupName", {
+        value: infraAdminGroup.groupName,
+        description: "인프라 담당자 IAM 사용자를 넣을 그룹(AdministratorAccess)",
+      });
+    }
+  }
 }
