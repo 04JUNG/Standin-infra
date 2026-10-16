@@ -16,7 +16,7 @@ Standin의 AWS 인프라를 코드로 관리한다. 두 서비스(BFF·추론)�
 |---|---|---|
 | `StandinRegistry` | ECR 저장소 3개(bff·inference·converter) | 이미지는 앱보다 오래 산다. 앱 스택을 지워도 롤백 대상이 남아야 한다 |
 | `StandinCicd` | GitHub OIDC 공급자 + 배포 역할 | 앱 스택보다 먼저 있어야 CI가 이미지를 밀어 넣을 수 있다 |
-| `StandinApp` | VPC·보안그룹·RDS·ECS·ALB·S3·시크릿 (프로덕션) | 아래 참고 |
+| `StandinApp` | VPC·보안그룹·RDS·ECS·ALB·S3·시크릿·사람용 IAM 정책/그룹 (프로덕션) | 아래 참고 |
 | `StandinStagingApp` | 같은 구성의 테스트 환경 | 프로덕션에 바로 배포하지 않기 위해. 「[테스트 환경(staging)](#테스트-환경staging)」 참고 |
 
 `StandinRegistry`와 `StandinCicd`는 **두 환경이 공유한다.** ECR을 나누지 않는 이유는, staging에서 검증한 그 이미지 SHA를 그대로 프로덕션에 올려야 검증이 의미가 있기 때문이다 — 저장소가 갈리면 "staging에서 통과한 이미지"와 "프로덕션에 올라간 이미지"가 다른 빌드일 수 있다.
@@ -156,7 +156,7 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 | | 프로덕션 | staging |
 |---|---|---|
 | 먼저 배포된 것 (`jwt`·`db`·`oauth`·`smtp`·`discord`·`vlm`) | `standin/jwt` — **구분자 없음** | `standin/staging/jwt` |
-| 나중에 추가된 것 (`beta-review-token`·`ip-hash-salt`) | `standin/production/beta-review-token` | `standin/staging/beta-review-token` |
+| 나중에 추가된 것 (`beta-review-token`·`ip-hash-salt`·`gap-export`) | `standin/production/beta-review-token` | `standin/staging/beta-review-token` |
 
 프로덕션 구분자는 `envName`(`prod`)이 아니라 **`appEnv`(`production`)**다. `prod`로 적으면
 `ResourceNotFoundException`이 난다. 실제 이름은 이렇게 확인한다.
@@ -164,6 +164,21 @@ IP는 원문을 저장하지 않는다 — `sha256(salt + IP)`만 카운터 키�
 ```bash
 aws secretsmanager list-secrets --region ap-northeast-2 --query "SecretList[].Name" --output text
 ```
+
+### 공백 관측 export 시크릿 (`standin/<env>/gap-export`)
+
+라이브러리에 맞는 포즈가 없던 사례를 모으는 비식별 export(`GET /v1/admin/gaps/observations`,
+`Standin-app-server/docs/API.md`)가 쓴다. BFF API 컨테이너에만 주입된다.
+
+| 키 | ECS 환경변수 | 값 |
+|---|---|---|
+| `hmacKey` | `GAP_EXPORT_HMAC_KEY` | 자동 생성. 커서 서명과 export별 가명 salt 유도에 쓴다 |
+| `reviewers` | `GAP_EXPORT_REVIEWERS` | export를 받을 검토자 이름, 쉼표 구분. `beta-review-token` JSON의 키와 같아야 한다 |
+
+- `reviewers`는 처음에 비어 있고, 비어 있으면 아무도 export를 받지 못한다. 이 저장소가
+  공개라서 이름을 코드에 두지 않는다. 콘솔에서 채운 뒤 BFF 서비스를 새로 띄워야 반영된다.
+- `hmacKey`를 바꾸면 진행 중인 export의 커서만 무효가 된다. 가명은 export마다 새로 만들므로,
+  예전 export와 연결되지 않는 것은 키를 바꾸지 않아도 마찬가지다.
 
 ## cdk.json은 배포 상태의 사본이다
 
@@ -483,16 +498,29 @@ aws s3 cp v1.tar.gz s3://<AssetsBucketName>/pose-library/v1.tar.gz
 BFF·worker·RDS 로그 그룹은 열지 않는다 — 사용자 데이터가 흐른다. 다른 그룹은 이름만
 보이고(`logs:DescribeLogGroups`, 콘솔 목록용) 내용은 열리지 않는다.
 
-사람별 IAM 사용자나 장기 액세스 키를 새로 만들지 말고, IAM Identity Center에서 추론 팀
-그룹용 권한 세트를 만든 뒤 출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책
-`standin-inference-operator`를 연결한다. 기존 사내 운영 역할을 쓰는 경우에는 그 역할에
-같은 정책을 연결해도 된다.
+출력된 `InferenceOperatorPolicyArn`의 고객 관리형 정책 `standin-inference-operator`를
+담당자에게 연결한다. 기존 사내 운영 역할을 쓰는 경우에는 그 역할에 붙여도 된다.
 
-담당자는 SSO로 로그인한 뒤 번들을 업로드하고 추론 서비스만 새로 배포한다.
+**⚠ 이 계정에서는 IAM Identity Center를 쓸 수 없다**(「팀원 조회 권한」 참고). 그래서
+담당자에게도 사람별 IAM 사용자를 만들고, 업로드 스크립트가 CLI로 도는 만큼 **액세스 키를
+발급한다.** 원래 원칙은 장기 키를 만들지 않는 것이지만, 이 계정에서는 SSO가 막혀 있어
+대안이 없다. 대신 아래를 지킨다.
+
+- 키는 **업로드 스크립트를 직접 돌리는 사람에게만** 준다. 콘솔로 충분한 사람은 비밀번호만 준다
+- MFA를 등록하게 한다. 키가 있어도 콘솔 경로는 MFA로 막는다
+- 담당이 바뀌거나 쓰지 않게 되면 **그날 삭제한다**(`aws iam delete-access-key`)
+- 분기마다 명부(「누가 무엇을 갖고 있나」)와 대조해 남은 키를 점검한다
 
 ```bash
-aws configure sso --profile standin-inference    # 최초 1회
-aws sso login --profile standin-inference
+aws iam create-access-key --user-name <이름>   # 비밀값은 이때 한 번만 보인다
+aws iam list-access-keys --user-name <이름>
+aws iam delete-access-key --user-name <이름> --access-key-id <키 ID>
+```
+
+담당자는 받은 키로 프로필을 만든 뒤 번들을 업로드하고 추론 서비스만 새로 배포한다.
+
+```bash
+aws configure --profile standin-inference        # 최초 1회, 리전 ap-northeast-2
 
 python scripts/deploy_pose_library.py data/      # 검증·업로드·재기동·확인
 python scripts/deploy_pose_library.py --rollback # 직전 번들로 되돌리기
@@ -522,8 +550,9 @@ Innovation Sandbox 계정이고, 조직 SCP가 `sso:*`를 명시적으로 막는
 
 - 이름은 영문이다(IAM 이름에 한글 불가). 예: 동원 → `dongwon`
 - 연결 정책: `standin-team-viewer` + `IAMUserChangePassword`(첫 로그인 때 비밀번호 변경용)
-- **액세스 키는 만들지 않는다.** 콘솔 비밀번호만 켜고, 첫 로그인 뒤 MFA를 등록하게 한다
+- **조회만 하는 사람에게는 액세스 키를 만들지 않는다.** 콘솔 비밀번호만 켜고, 첫 로그인 뒤 MFA를 등록하게 한다. CLI가 필요하면 「추론 서버 담당자 IAM 설정」의 키 발급 규칙을 따른다
 - 로그인 주소: `https://136889124221.signin.aws.amazon.com/console`
+- 비밀번호를 잃어버리면 사용자를 새로 만들지 말고 재설정한다 — `aws iam update-login-profile --user-name <이름> --password '<임시 비밀번호>' --password-reset-required`
 
 ```bash
 aws iam create-user --user-name <이름> --tags Key=purpose,Value=standin-team-viewer
@@ -533,8 +562,6 @@ aws iam create-login-profile --user-name <이름> --password '<임시 비밀번�
 ```
 
 빼는 순서는 반대다 — `delete-login-profile` → 정책 `detach-user-policy` → MFA 해제 → `delete-user`.
-
-현재 발급: `dongwon`(2026-09-21).
 
 | 대상 | 허용 |
 |---|---|
@@ -550,11 +577,71 @@ aws iam create-login-profile --user-name <이름> --password '<임시 비밀번�
 보인다(아래 「토큰은 사람마다 다르게 준다」). 대시보드는 사람별 토큰으로 따로 연다.
 
 ```bash
-aws sso login --profile standin-viewer
+aws login --profile standin-viewer   # 콘솔 로그인으로 CLI 자격증명을 받는다
 aws logs describe-log-groups --profile standin-viewer --query 'logGroups[].logGroupName'
 aws logs tail <그룹 이름> --since 30m --follow --profile standin-viewer
 aws s3 ls s3://<BetaDataBucketName>/ --profile standin-viewer
 ```
+
+#### 본인 MFA는 본인이 등록한다
+
+운영·조회 정책에는 IAM 권한이 없다. 그래서 사용자가 콘솔 「보안 자격 증명」에서 MFA를
+등록하려 하면 `iam:ListMFADevices`부터 거부되고 **등록 버튼 자체가 보이지 않는다.**
+사용자를 만들 때 `standin-self-manage-credentials`(출력 `SelfManageCredentialsPolicyArn`)를
+같이 붙인다.
+
+```bash
+aws iam attach-user-policy --user-name <이름> \
+  --policy-arn arn:aws:iam::136889124221:policy/standin-self-manage-credentials
+```
+
+- 본인 것만 열린다. 범위는 `${aws:username}`으로 갈린다
+- **가상 MFA 장치 이름은 사용자 이름으로 시작해야 한다**(콘솔 기본값 그대로 두면 된다)
+- MFA 해제는 MFA로 로그인한 세션에서만 된다. 기기를 잃으면 관리자가 떼 준다 —
+  `aws iam deactivate-mfa-device` → `aws iam delete-virtual-mfa-device`
+
+#### 누가 무엇을 갖고 있나
+
+**이 저장소는 공개다.** 사람별 권한·키·MFA 현황은 여기 적지 않고 비공개 문서
+(master-docs `제품팀_인수인계/`)의 명부에서 관리한다. 사람을 추가·제거하거나 키를
+발급·삭제하면 그 명부를 같은 날 고친다.
+
+계정에서 직접 확인하는 명령은 다음과 같다.
+
+```bash
+aws iam list-users --query 'Users[].UserName'
+aws iam list-attached-user-policies --user-name <이름> --query 'AttachedPolicies[].PolicyName'
+aws iam list-access-keys --user-name <이름>
+aws iam list-mfa-devices --user-name <이름>
+```
+
+조회 전용 팀원에게 업로드 권한을 더할 때는 `standin-team-viewer`를 떼는 쪽이 좁다. 두
+정책을 함께 두면 업로드용 키로 `BetaDataBucket`(베타 사용자 입력)까지 읽을 수 있다.
+
+#### 인프라 담당자 권한 (관리자)
+
+인프라 전체를 맡는 사람은 `standin-infra-admin` 그룹에 넣는다(출력 `InfraAdminGroupName`).
+그룹에는 AWS 관리형 정책 `AdministratorAccess`가 붙어 있다. `cdk deploy`가 IAM 역할·정책까지
+만들고, 시크릿 교체·모든 서비스 재배포·팀원 IAM 발급까지 해야 해서 좁은 정책으로는 막힌다.
+
+그룹은 CDK가 만들고 **멤버는 CLI로 관리한다** — 위 두 정책과 같은 원칙이다. 이 계정은 SSO를
+쓸 수 없으므로 사람마다 콘솔 IAM 사용자를 둔다(「팀원 조회 권한」 참고).
+
+- 이미 IAM 사용자가 있으면 그룹에만 넣는다. 붙어 있던 `standin-inference-operator`·`standin-team-viewer`는 관리자 권한에 포함되므로 떼도 되고 둬도 된다
+- 없으면 「팀원 조회 권한」의 `create-user`·`create-login-profile`로 만든 뒤 그룹에 넣는다
+- **MFA를 반드시 등록하게 한다.** 이 그룹은 계정 전체를 바꿀 수 있다
+- **액세스 키는 만들지 않는다.** CLI는 콘솔 로그인으로 자격증명을 받는 `aws login`(AWS CLI v2 최신)을 쓴다
+
+```bash
+aws iam add-user-to-group --group-name standin-infra-admin --user-name <이름>
+aws iam get-group --group-name standin-infra-admin --query 'Users[].UserName'
+
+# 담당자 본인 PC에서
+aws login --profile standin-admin
+aws sts get-caller-identity --profile standin-admin
+```
+
+빼는 것은 `aws iam remove-user-from-group --group-name standin-infra-admin --user-name <이름>`.
 
 ### 3. 소셜 로그인 키
 
@@ -781,3 +868,9 @@ Gemini 호출 비용이 별도로 붙으므로 `stagingQuotaGlobalDaily`를 낮�
 - **staging은 같은 AWS 계정에 있다.** 스택·물리 이름은 갈렸지만 IAM·서비스 쿼터·청구는 프로덕션과 같은 계정을 쓴다. staging 작업이 실수로 프로덕션 리소스를 건드릴 여지가 남아 있다. 폭발 반경을 완전히 끊으려면 Organizations로 계정을 나눠야 한다(그때는 CDK bootstrap·OIDC 공급자·교차계정 ECR pull이 추가로 필요하다).
 - **staging은 프로덕션과 규모가 다르지 않다.** 태스크 크기·RDS 인스턴스가 같아 부하 특성은 비슷하지만, `desiredCount`가 1이라 다중 태스크에서만 나는 문제(세션 고정, 동시성 경합)는 여기서도 잡히지 않는다.
 - **SMTP 공급자 운영 설정 필요.** 인프라 배선은 `standin/smtp`로 완료돼 있지만 실제 발신 계정과 주소는 별도로 준비해야 한다. SES를 선택하면 프로덕션 액세스 신청과 발신 주소 인증에 시간이 걸릴 수 있다.
+
+### 스테이징 체형 자산
+
+9종 FBX·차렷 PNG·검수 카탈로그는 스테이징 S3의 버전 고정 release에서 태스크 시작 시 받는다.
+다음 앱 이미지 배포에서도 자산을 유지하는 설정과 검수 범위는
+[체형 원격 등록 지침](docs/BODY_ASSETS_STAGING.md)을 따른다.

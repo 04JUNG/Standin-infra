@@ -1,0 +1,40 @@
+{
+  "version": "staging-9-20261012-v1",
+  "manifestKey": "body-models/releases/staging-9-20261012-9acb2ee7ec24/manifest.json",
+  "manifestSha256": "9acb2ee7ec2444706107b5d1c5b264866dc35bdfc8918a31cbec997d12fc9d72",
+  "bodyEnvironment": {
+    "BODY_MALE_BASE_URI": "/app/body-staging/fbx/male-base.fbx",
+    "BODY_FEMALE_BASE_URI": "/app/body-staging/fbx/female-base.fbx",
+    "BODY_TEEN_MALE_URI": "/app/body-staging/fbx/teen-male.fbx",
+    "BODY_TEEN_FEMALE_URI": "/app/body-staging/fbx/teen-female.fbx",
+    "BODY_CHILD_URI": "/app/body-staging/fbx/child.fbx",
+    "BODY_MALE_ATHLETIC_URI": "/app/body-staging/fbx/male-athletic.fbx",
+    "BODY_FEMALE_ATHLETIC_URI": "/app/body-staging/fbx/female-athletic.fbx",
+    "BODY_MALE_MUSCULAR_URI": "/app/body-staging/fbx/male-muscular.fbx",
+    "BODY_FEMALE_MUSCULAR_URI": "/app/body-staging/fbx/female-muscular.fbx"
+  },
+  "bodyIds": [
+    "male-base",
+    "female-base",
+    "teen-male",
+    "teen-female",
+    "child",
+    "male-athletic",
+    "female-athletic",
+    "male-muscular",
+    "female-muscular"
+  ],
+  "supportedPoseIds": [
+    "webtoon_daily_38",
+    "rokoko_Shamwow_Guy_mixamo_01353_mirror",
+    "webtoon_daily_16",
+    "rokoko_Clipboard_Lever_Computer_mixamo_00105",
+    "rokoko_Singer_mixamo_01432_mirror",
+    "sd_cmu_49_05_f00114",
+    "combat_ual1_Crouch_Idle_Loop_f04600",
+    "sd_cmu_14_29_f01624",
+    "Dig And Plant Seeds_00165",
+    "style100_Skip_FR_f002204_49438f60"
+  ],
+  "approvalScope": "staging-only-10-poses; not full-library approval"
+}
