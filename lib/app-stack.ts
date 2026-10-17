@@ -1242,6 +1242,43 @@ export class AppStack extends Stack {
         })
       : undefined;
 
+    // ── 배포 역할의 사전검사 읽기 ────────────────────────────────
+    // Standin-server 배포 워크플로는 ECS를 교체하기 전에 새 이미지를 이 환경의 task
+    // definition 환경변수로 한 번 띄워 본다(`check_fullbody_startup.py`). 그때 추론
+    // 서버가 기동하며 받는 파일 — 포즈 라이브러리 번들과 Human-Art 모델 번들 — 을
+    // GitHub 배포 역할(`standin-github-deploy`, StandinCicd 소유)의 자격증명으로 읽는다.
+    // 이 권한이 없으면 HeadObject가 403으로 끝나고 배포가 서버 교체 전에 멈춘다.
+    //
+    // 범위는 위 POSE_LIBRARY_URI·POSE_MODEL_URI가 가리키는 것과 똑같이 맞춘다. 모델은
+    // 빌드 ID 디렉터리 아래(manifest + manifest가 가리키는 onnx)만 연다 — 빌드 ID를
+    // 바꾸면 이 권한도 같이 바뀌어, 번들 교체 뒤 배포가 다시 403으로 막히지 않는다.
+    // `GetObject`만 준다(HeadObject 포함). 버킷 목록·쓰기·다른 프리픽스는 열지 않는다.
+    // AssetsBucket은 SSE-S3라 KMS 권한은 필요 없다.
+    //
+    // 역할은 공유 스택 것이지만 버킷은 환경마다 달라서 여기서 붙인다. 같은 역할에
+    // 두 환경이 각각 인라인 정책을 붙이므로 이름에 환경을 넣어 서로 덮어쓰지 않게 한다.
+    const preflightReadResources = [
+      ...(isProd ? [assets.arnForObjects("pose-library/v1.tar.gz")] : []),
+      ...(props.poseModelBuildId
+        ? [assets.arnForObjects(`pose-models/humanart-m/${props.poseModelBuildId}/*`)]
+        : []),
+    ];
+    if (preflightReadResources.length > 0) {
+      new iam.Policy(this, "DeployRolePreflightRead", {
+        policyName: isPrimary
+          ? "standin-deploy-preflight-read"
+          : `standin-${props.envName}-deploy-preflight-read`,
+        roles: [iam.Role.fromRoleName(this, "GithubDeployRole", "standin-github-deploy")],
+        statements: [
+          new iam.PolicyStatement({
+            sid: "ReadStartupAssetsForPreflight",
+            actions: ["s3:GetObject"],
+            resources: preflightReadResources,
+          }),
+        ],
+      });
+    }
+
     // ── 본인 자격증명 관리 ───────────────────────────────────────
     // 운영·조회 정책에는 IAM 권한이 없어서, 사용자가 콘솔 「보안 자격 증명」에서 자기
     // MFA를 등록하려 하면 `ListMFADevices`부터 거부된다(등록 버튼 자체가 안 보인다).
