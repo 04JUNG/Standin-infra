@@ -92,6 +92,8 @@
     "productionBodyAssetsEnabled": true,
     "handSelectionEnabled": true,
     "semanticSearchEnabled": true,
-    "//productionBodyAssetsEnabled": "운영에도 동일한 SHA256의 체형·shape 자산을 설치한다. 자산은 운영 버킷에 먼저 복사해야 한다."
+    "//productionBodyAssetsEnabled": "운영에도 동일한 SHA256의 체형·shape 자산을 설치한다. 자산은 운영 버킷에 먼저 복사해야 한다.",
+    "poseLibraryKey": "pose-library/releases/lib-20261020-095b99ca-previews-20261021-full-4786a62e2feb.tar.gz",
+    "//poseLibraryKey": "운영 검색 DB·BVH와 검증된 기본 체형 포스터를 함께 고정한다. 스테이징은 stagingPoseLibraryKey로 별도 지정한다."
   }
 }

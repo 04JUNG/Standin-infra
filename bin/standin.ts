@@ -112,6 +112,13 @@ const converterImageTag = String(
  * ⚠ 값이 있는데 S3에 번들이 없으면 cascade 경로에서 추론이 기동에 실패한다.
  *   업로드 → 이 값 → 배포 순서를 지킨다.
  */
+const poseLibraryKey = String(
+  app.node.tryGetContext(isStaging ? "stagingPoseLibraryKey" : "poseLibraryKey") ?? "pose-library/v1.tar.gz",
+);
+if (!/^pose-library\/[A-Za-z0-9_./-]+\.tar\.gz$/.test(poseLibraryKey) || poseLibraryKey.split("/").includes("..")) {
+  throw new Error("poseLibraryKey must be a pose-library/*.tar.gz object key without parent traversal");
+}
+
 const poseModelBuildId = String(
   app.node.tryGetContext(isStaging ? "stagingPoseModelBuildId" : "poseModelBuildId") ?? "",
 );
@@ -260,6 +267,7 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   serviceDesiredCount,
   quotaGlobalDaily,
   poseModelBuildId,
+  poseLibraryKey,
   converterEnabled,
   fbxExportEnabled,
   converterImageTag,
