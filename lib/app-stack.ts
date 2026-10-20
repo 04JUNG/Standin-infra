@@ -524,11 +524,13 @@ export class AppStack extends Stack {
     //   - 2 GB에서는 기동 중 exit 137(OOM)로 네 번 연속 죽고 회로 차단기가 롤백했다.
     //   - 8 GB로 띄워 상한 없이 재 보니 최대 2,608 MiB, 평상시 ~2,550 MiB였다.
     //   - CPU는 기동 순간 최대 0.6 vCPU, 평상시 거의 0이라 1 vCPU로 충분하다.
-    // 4 GB는 실사용 대비 ~1.4 GB 여유다. 이 실측은 분석 트래픽이 거의 없던 상태라,
-    // 동시 분석에서 85%(약 3.4 GB)를 넘으면 6 GB로 올린다. OOM은 디스코드 TASK_OOM으로 온다.
+    //   - 2026-10-20 후보 라이브러리(`pose-library/candidates/…`, ~810–850 MB로 v1의 7–8배)를
+    //     올리자 최대 2,937 MiB까지 올랐다.
+    // 6 GB는 후보 라이브러리 피크 대비 ~3 GB 여유다(4 GB면 피크에서 ~72%). 동시 분석이 몰리면
+    // 더 쓰므로 여유를 크게 잡았다. OOM은 디스코드 TASK_OOM으로 온다.
     const inferenceTask = new ecs.FargateTaskDefinition(this, "InferenceTask", {
       cpu: 1024,
-      memoryLimitMiB: 4096,
+      memoryLimitMiB: 6144,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
