@@ -34,3 +34,14 @@ BFF는 BODY_SELECTION/UX/SHAPE_EDIT/SHAPE_BAKE 플래그를 켠다. Converter는
 이 작업은 현재 운영 task definition을 원본으로 보존하고 필요한 부분만 갱신한다. 문제가 발생하면 변경 전 task definition으로 ECS 서비스를 돌린다. GitHub의 두 기능 변수도 이전 값으로 되돌린다. 새 자산은 immutable 경로에 남겨 재현·롤백에 사용하며 기존 자산은 그대로다.
 
 CDK 전체 배포 전에는 `cdk diff`로 현재 이미지·태스크·스케줄러 상태와 대조한다. 운영 중 다른 세션이 배포한 버전이나 유휴 worker의 상태를 과거 값으로 덮어쓰면 안 된다. `productionBodyAssetsEnabled=false` 또는 `stagingBodyAssetsEnabled=false`로 자산 초기화를 생략하고, 손·자연어는 `handSelectionEnabled=false`, `semanticSearchEnabled=false`로 별도 비활성화할 수 있다.
+
+
+## 검색 후보의 저장된 참고 이미지
+
+운영 `poseLibraryKey`는 `lib-20261020-095b99ca`의 DB·BVH를 유지한 고정 번들을 가리킨다. DB SHA256은 `4e7bec1d99cf889fd8cc90be8e3b27ab8805be0a5e41cca01479f357cf880880`이다. 기본 체형 포스터는 5,862개 포즈 × 5개 범위 = 29,310장이다. PNG 디코딩·소스 BVH·템플릿·렌더러 해시를 확인한다. 전체 번들의 SHA256은 `4786a62e2feb74e9e2f85deeb6c84d1b42130a20ca1ce1dcc303cd92f7d2e47c`이다.
+
+`human-templates` 5개는 다섯 체형이 아니다. 기존 `standin-master-v2` 남성 참고 모델 하나의 full·half·bust·shoulder_head·head 범위별 템플릿이다. 새 남성 0.7.2·여성 0.3.4의 커스텀 체형 자산과 별개이며, 최종 FBX에 선택한 체형·손을 적용하는 계약은 변경하지 않는다. 목록에서 Converter를 실행하거나 검수·저장 권한을 올리지 않는다.
+
+운영 버킷에 새 번들을 먼저 업로드하고 내려받은 아카이브 SHA256을 확인한 뒤 추론의 `POSE_LIBRARY_URI`만 교체한다. 기존 `pose-library/v1.tar.gz` 및 스테이징 URI는 변경하지 않는다. 현재 운영 task definition의 이미지·환경변수·볼륨·초기화 컨테이너를 그대로 보존한다. 배포 전 격리 태스크로 템플릿 5개·등록 포스터 응답 및 검색 DB 동일성을 확인하고, 문제가 있으면 직전 운영 task definition으로 되돌린다. 설치 앱 E2E와 구분해 기록한다.
+
+새 검색 라이브러리를 발행할 때는 새 DB·BVH에 해당하는 미리보기 자산도 함께 만들고 `poseLibraryKey`를 새 고정 번들로 갱신해야 한다. 기존 v1 파일만 교체하면 이 고정 URI에 자동 반영되지 않는다. 스테이징은 `stagingPoseLibraryKey`로 별도 지정하며 미지정 시 기존 v1 경로를 유지한다.

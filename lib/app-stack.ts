@@ -85,6 +85,8 @@ export interface AppStackProps extends StackProps {
    *   업로드가 이 값보다 먼저다.
    */
   poseModelBuildId: string;
+  /** Immutable library bundle key, including validated preview assets. */
+  poseLibraryKey: string;
   /**
    * converter 서비스를 만들지.
    *
@@ -592,7 +594,7 @@ export class AppStack extends Stack {
         INDEX_PATH: "/app/data/index.pkl",
         // 1단계에서는 비운다 → 합성 라이브러리로 기동한다.
         // 2단계에서는 번들을 받아 푼다. 번들이 없으면 기동에 실패한다(의도).
-        POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
+        POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/${props.poseLibraryKey}` : "",
         /**
          * Human-Art M 모델 번들. 앱 배포 워크플로가 아니라 **여기가 소유자**다
          * (Standin-server #49 리뷰에서 정리). 버킷 이름이 환경마다 다른 인프라 설정이고,
