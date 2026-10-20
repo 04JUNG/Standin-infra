@@ -519,9 +519,18 @@ export class AppStack extends Stack {
     };
 
     // ── 추론 서비스(내부 전용) ────────────────────────────────────
+    // 사양 근거(2026-10-17 staging 실측). 전신 라우팅(ROUTING_FULLBODY_ENABLED=1)이
+    // 기동하며 Human-Art 모델 두 개와 전신 자산(포즈 5,814개)을 한꺼번에 올린다.
+    //   - 2 GB에서는 기동 중 exit 137(OOM)로 네 번 연속 죽고 회로 차단기가 롤백했다.
+    //   - 8 GB로 띄워 상한 없이 재 보니 최대 2,608 MiB, 평상시 ~2,550 MiB였다.
+    //   - CPU는 기동 순간 최대 0.6 vCPU, 평상시 거의 0이라 1 vCPU로 충분하다.
+    //   - 2026-10-20 후보 라이브러리(`pose-library/candidates/…`, ~810–850 MB로 v1의 7–8배)를
+    //     올리자 최대 2,937 MiB까지 올랐다.
+    // 6 GB는 후보 라이브러리 피크 대비 ~3 GB 여유다(4 GB면 피크에서 ~72%). 동시 분석이 몰리면
+    // 더 쓰므로 여유를 크게 잡았다. OOM은 디스코드 TASK_OOM으로 온다.
     const inferenceTask = new ecs.FargateTaskDefinition(this, "InferenceTask", {
       cpu: 1024,
-      memoryLimitMiB: 2048,
+      memoryLimitMiB: 6144,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
@@ -1241,6 +1250,47 @@ export class AppStack extends Stack {
           managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess")],
         })
       : undefined;
+
+    // ── 배포 역할의 사전검사 읽기 ────────────────────────────────
+    // Standin-server 배포 워크플로는 ECS를 교체하기 전에 새 이미지를 이 환경의 task
+    // definition 환경변수로 한 번 띄워 본다(`check_fullbody_startup.py`). 그때 추론
+    // 서버가 기동하며 받는 파일 — 포즈 라이브러리 번들과 Human-Art 모델 번들 — 을
+    // GitHub 배포 역할(`standin-github-deploy`, StandinCicd 소유)의 자격증명으로 읽는다.
+    // 이 권한이 없으면 HeadObject가 403으로 끝나고 배포가 서버 교체 전에 멈춘다.
+    //
+    // 라이브러리는 `pose-library/*` 전체를 연다. 워크플로는 CDK 값이 아니라 **지금 서비스가
+    // 쓰는 task definition**을 기준으로 사전검사를 하는데, 운영자가 후보 라이브러리
+    // (`pose-library/candidates/…`)로 리비전을 직접 바꿔 시험하면 그 파일을 읽는다
+    // (2026-10-19 staging에서 2시간 사이 후보 세 개). 파일 하나씩 열면 후보마다 403이 난다.
+    // 추론 태스크 역할은 이미 버킷 전체를 읽으므로, 배포 역할이 같은 라이브러리를 읽어도
+    // 새로 드러나는 데이터는 없다. 모델은 빌드 ID 디렉터리 아래(manifest + onnx)만 연다 —
+    // 빌드 ID를 바꾸면 이 권한도 같이 바뀐다.
+    // `GetObject`만 준다(HeadObject 포함). 버킷 목록·쓰기·다른 프리픽스는 열지 않는다.
+    // AssetsBucket은 SSE-S3라 KMS 권한은 필요 없다.
+    //
+    // 역할은 공유 스택 것이지만 버킷은 환경마다 달라서 여기서 붙인다. 같은 역할에
+    // 두 환경이 각각 인라인 정책을 붙이므로 이름에 환경을 넣어 서로 덮어쓰지 않게 한다.
+    const preflightReadResources = [
+      ...(isProd ? [assets.arnForObjects("pose-library/*")] : []),
+      ...(props.poseModelBuildId
+        ? [assets.arnForObjects(`pose-models/humanart-m/${props.poseModelBuildId}/*`)]
+        : []),
+    ];
+    if (preflightReadResources.length > 0) {
+      new iam.Policy(this, "DeployRolePreflightRead", {
+        policyName: isPrimary
+          ? "standin-deploy-preflight-read"
+          : `standin-${props.envName}-deploy-preflight-read`,
+        roles: [iam.Role.fromRoleName(this, "GithubDeployRole", "standin-github-deploy")],
+        statements: [
+          new iam.PolicyStatement({
+            sid: "ReadStartupAssetsForPreflight",
+            actions: ["s3:GetObject"],
+            resources: preflightReadResources,
+          }),
+        ],
+      });
+    }
 
     // ── 본인 자격증명 관리 ───────────────────────────────────────
     // 운영·조회 정책에는 IAM 권한이 없어서, 사용자가 콘솔 「보안 자격 증명」에서 자기
