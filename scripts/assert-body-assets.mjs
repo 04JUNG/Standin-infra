@@ -16,10 +16,21 @@ for(const task of tasks) {
   assert.ok(init);
   assert.equal(init.Essential,false);
   assert.equal(init.User,'0');
+  assert.match(init.Image,/@sha256:[a-f0-9]{64}$/);
   assert.ok(main.DependsOn.some(d=>d.ContainerName===init.Name&&d.Condition==='SUCCESS'));
   assert.ok(main.MountPoints.some(m=>m.SourceVolume==='body-assets'&&m.ContainerPath==='/app/body-staging'&&m.ReadOnly===true));
   assert.ok(init.MountPoints.some(m=>m.SourceVolume==='body-assets'&&m.ReadOnly===false));
   assert.ok(init.Environment.some(e=>e.Name==='BODY_ASSETS_MANIFEST_SHA256'&&/^[a-f0-9]{64}$/.test(e.Value)));
+  const env=Object.fromEntries(main.Environment.map(e=>[e.Name,e.Value]));
+  if(main.Name==='bff'||main.Name==='analysis-worker') {
+    for(const flag of ['BODY_SELECTION_ENABLED','BODY_UX_ENABLED','BODY_SHAPE_EDIT_ENABLED','BODY_SHAPE_BAKE_ENABLED'])assert.equal(env[flag],'true');
+    assert.equal(env.CONVERTER_SHAPE_TIMEOUT_MS,'320000');
+  }
+  if(main.Name==='converter')assert.equal(env.CONVERTER_SHAPE_REGISTRY,'/app/body-staging/shape-bakes.json');
+  if(main.Name==='inference') {
+    assert.equal(env.ROUTING_FULLBODY_ENABLED,'1');assert.equal(env.ROUTING_PREPARE_ASSETS,'1');
+    assert.equal(env.POSE_MODEL_VARIANT,'humanart-m');
+  }
   assert.ok(main.Environment.some(e=>['BODY_CATALOG_PATH','CONVERTER_CHARACTER_REGISTRY'].includes(e.Name)&&e.Value.startsWith('/app/body-staging/')));
 }
 if(mode==='on')assert.equal(checked,4);

@@ -19,8 +19,10 @@ import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
 import type { Construct } from "constructs";
 
 export interface AppStackProps extends StackProps {
-  /** Pinned staging body release. Production has no body asset initializer. */
+  /** Pinned body release installed from each environment’s own assets bucket. */
   bodyAssets?: BodyAssetsRelease;
+  handSelectionEnabled: boolean;
+  semanticSearchEnabled: boolean;
   /**
    * 배포 대상 환경. 물리 이름(시크릿·KMS 별칭·IAM 정책·Cloud Map)의 유일성을 만든다.
    *
@@ -660,7 +662,7 @@ export class AppStack extends Stack {
     // 번들을 받으려면 읽기 권한이 필요하다(태스크 역할 → 키를 환경에 두지 않는다).
     assets.grantRead(inferenceTask.taskRole);
     if (props.bodyAssets) {
-      if (props.envName !== 'staging' || !props.converterEnabled || !props.fbxExportEnabled) throw new Error('body release requires staging converter and FBX export');
+      if (!props.converterEnabled || !props.fbxExportEnabled) throw new Error('body release requires converter and FBX export');
       configureBodyAssets(inferenceTask, inferenceTask.findContainer('inference')!, assets,
         ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, props.imageTag), props.bodyAssets, 'inference');
     }
@@ -863,6 +865,8 @@ export class AppStack extends Stack {
       environment: {
         PORT: "8080",
         NODE_ENV: "production",
+        HAND_SELECTION_ENABLED: props.handSelectionEnabled ? "true" : "false",
+        SEMANTIC_SEARCH_ENABLED: props.semanticSearchEnabled ? "true" : "false",
         PUBLIC_URL: props.publicUrl,
         // Vercel 가입 페이지가 register/resend-verification API를 직접 호출한다.
         CORS_ORIGINS: props.corsOrigins,
@@ -1008,8 +1012,14 @@ export class AppStack extends Stack {
       logging: containerLogging(workerTask, "analysis-worker"),
       environment: {
         NODE_ENV: "production",
+        HAND_SELECTION_ENABLED: props.handSelectionEnabled ? "true" : "false",
+        SEMANTIC_SEARCH_ENABLED: props.semanticSearchEnabled ? "true" : "false",
         INFERENCE_BASE_URL: inferenceBaseUrl,
         BETA_DATA_BUCKET: betaData.bucketName,
+        REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
+        REFINE_TIMEOUT_MS: "9000",
+        FBX_EXPORT_ENABLED: props.fbxExportEnabled ? "true" : "false",
+        ...(props.converterEnabled ? { CONVERTER_BASE_URL: converterBaseUrl, CONVERTER_TIMEOUT_MS: props.bodyAssets ? "120000" : "90000" } : {}),
         ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
         WORKER_VISIBILITY_SECONDS: "180",
         WORKER_LEASE_SECONDS: "180",

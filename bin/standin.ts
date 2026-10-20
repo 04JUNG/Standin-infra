@@ -35,8 +35,8 @@ const envName = (app.node.tryGetContext("envName") as string) === "staging"
   : ("prod" as const);
 const isStaging = envName === "staging";
 
-const bodyAssets: BodyAssetsRelease | undefined = isStaging && booleanContext("stagingBodyAssetsEnabled", true)
-  ? JSON.parse(readFileSync(path.join(__dirname, '..', 'config', 'staging-body-assets.json'), 'utf8'))
+const bodyAssets: BodyAssetsRelease | undefined = booleanContext(isStaging ? "stagingBodyAssetsEnabled" : "productionBodyAssetsEnabled", true)
+  ? JSON.parse(readFileSync(path.join(__dirname, '..', 'config', isStaging ? 'staging-body-assets.json' : 'production-body-assets.json'), 'utf8'))
   : undefined;
 
 const githubOrg = app.node.tryGetContext("githubOrg") as string;
@@ -267,6 +267,8 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   logShipping,
   logRetentionDays,
   bodyAssets,
+  handSelectionEnabled: booleanContext(isStaging ? "stagingHandSelectionEnabled" : "handSelectionEnabled", true),
+  semanticSearchEnabled: booleanContext(isStaging ? "stagingSemanticSearchEnabled" : "semanticSearchEnabled", true),
 });
 
 cdk.Tags.of(app).add("Project", "Standin");
