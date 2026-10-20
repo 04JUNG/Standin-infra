@@ -1,5 +1,7 @@
 # 스테이징 체형 자산 9종 원격 등록
 
+> 이전 릴리스 기록. 현재 설정은 [운영·스테이징 shape 릴리스](BODY_ASSETS_PRODUCTION.md)를 따른다.
+
 2026-10-12 등록. 2026-10-10의 전용 이미지에 포함했던 자산을 스테이징 AssetsBucket의
 `body-models/releases/staging-9-20261012-9acb2ee7ec24/`에 게시했다.
 `config/staging-body-assets.json`이 manifest key, SHA-256, converter 환경변수 매핑을 고정한다.
