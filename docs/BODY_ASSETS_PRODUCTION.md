@@ -20,7 +20,8 @@
 2. 운영 DB·시크릿·네트워크·개인정보 설정을 보존한 후보 태스크로 Converter와 추론을 격리 실행한다.
 3. Converter → 추론 → BFF 순서로 롤링 배포하고 각 단계에서 health와 실제 기능 계약을 확인한다. SQS 유휴 worker는 desiredCount=0을 유지한다.
 4. BFF beta GitHub environment의 `HAND_SELECTION_ENABLED`, `SEMANTIC_SEARCH_ENABLED`도 `true`로 설정한다. 앱 배포 workflow가 이 값을 다시 주입하므로 태스크 환경변수만 바꾸면 다음 배포에 꺼진다.
-5. API 임시 설치로 models·body-preferences·body runtime/PNG·손 카탈로그/썸네일·자연어 실제 검색을 확인하고 임시 설치 데이터를 삭제한다.
+5. 추론 저장소 beta 환경에도 `ROUTING_FULLBODY_ENABLED=1`, `POSE_MODEL_VARIANT=humanart-m`, `POSE_CANARY_STAGE=canary-100`, `VLM_PERSON_TAGS=1`을 지정한다. main workflow의 기본 라우팅 값은 0이므로 태스크만 바꾸면 다음 배포에서 검색이 꺼진다.
+6. API 임시 설치로 models·body-preferences·body runtime/PNG·손 카탈로그/썸네일·자연어 실제 검색을 확인하고 임시 설치 데이터를 삭제한다.
 
 운영 추론 이미지와 pose library는 운영의 최신 버전을 유지한다. `ROUTING_FULLBODY_ENABLED=1`, `ROUTING_PREPARE_ASSETS=1`, `POSE_CALIBRATION_FROM_MANIFEST=1`, `POSE_MODEL_VARIANT=humanart-m`은 함께 적용한다. 스테이징의 과거 library URI를 운영에 복사해 최신 라이브러리를 되돌리지 않는다.
 
