@@ -830,11 +830,11 @@ CDK가 붙인 해시가 들어가 환경마다 다르고, 워크플로에 하드
 | 항목 | 월 |
 |---|---|
 | Fargate BFF (0.5 vCPU / 1 GB, arm64) | ~$15 |
-| Fargate 추론 (1 vCPU / 4 GB) — 전신 라우팅 기동에 2 GB로는 OOM, 근거는 `lib/app-stack.ts` | ~$44 |
+| Fargate 추론 (1 vCPU / 6 GB) — 전신 라우팅·후보 라이브러리 기동에 맞춘 사양, 근거는 `lib/app-stack.ts` | ~$51 |
 | ALB | ~$16 |
 | RDS t4g.micro + 20GB | ~$12 (첫 12개월 프리티어 가능) |
 | S3 · ECR · CloudWatch · Secrets Manager | ~$3 |
-| **합계** | **~$88** |
+| **합계** | **~$95** |
 
 NAT Gateway를 뺀 구성이다. 넣으면 ~$32가 더 든다.
 
