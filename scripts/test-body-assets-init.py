@@ -50,6 +50,20 @@ class InstallerTests(unittest.TestCase):
         self.manifest['files'][0]['roles']=['converter']
         with self.assertRaises(ValueError):self.run_install()
 
+    def test_shape_assets_are_verified_and_role_filtered(self):
+        entries = [('shape-bakes.json', ['converter']), ('sources/body.blend', ['converter']), ('sources/body.py', ['converter']), ('runtime/body.ssr', ['bff'])]
+        for path, roles in entries:
+            data = path.encode()
+            self.data[path] = data
+            self.manifest['files'].append(dict(path=path, size=len(data), sha256=hashlib.sha256(data).hexdigest(), roles=roles))
+        self.run_install('converter')
+        self.run_install('bff')
+        self.assertTrue((self.root/'converter'/'sources/body.blend').exists())
+        self.assertTrue((self.root/'bff'/'runtime/body.ssr').exists())
+        self.assertFalse((self.root/'bff'/'sources/body.blend').exists())
+        self.data['runtime/body.ssr'] = b'corrupt-runtime'
+        with self.assertRaises(ValueError): self.run_install('bff')
+
     def test_manifest_is_pinned(self):
         env=dict(BODY_ASSETS_ROLE='bff',BODY_ASSETS_MANIFEST_KEY=self.key,BODY_ASSETS_MANIFEST_SHA256='0'*64,BODY_ASSETS_ROOT=str(self.root))
         with self.assertRaises(ValueError):module.install(lambda key,limit:b'{}',env)

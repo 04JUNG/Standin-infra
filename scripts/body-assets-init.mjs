@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile, rename, chmod, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-const allowedPath = /^(?:body-catalog\.json|body-models\.json|characters\.json|fbx\/[a-z0-9-]+\.fbx|png\/[a-z0-9-]+\.png|qa\/[a-z0-9-]+\.json|preview\/posed-mesh-v1\/[a-f0-9]{64}\.(?:json|glb))$/;
+const allowedPath = /^(?:shape-bakes\.json|sources\/[a-z0-9-]+\.(?:blend|py)|runtime\/[a-z0-9-]+\.ssr|body-catalog\.json|body-models\.json|characters\.json|fbx\/[a-z0-9-]+\.fbx|png\/[a-z0-9-]+\.png|qa\/[a-z0-9-]+\.json|preview\/posed-mesh-v1\/[a-f0-9]{64}\.(?:json|glb))$/;
 const roles = new Set(['inference', 'converter', 'bff']);
 const limit = 300 * 1024 * 1024;
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
