@@ -19,8 +19,10 @@ import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
 import type { Construct } from "constructs";
 
 export interface AppStackProps extends StackProps {
-  /** Pinned staging body release. Production has no body asset initializer. */
+  /** Pinned body release installed from each environment’s own assets bucket. */
   bodyAssets?: BodyAssetsRelease;
+  handSelectionEnabled: boolean;
+  semanticSearchEnabled: boolean;
   /**
    * 배포 대상 환경. 물리 이름(시크릿·KMS 별칭·IAM 정책·Cloud Map)의 유일성을 만든다.
    *
@@ -83,6 +85,8 @@ export interface AppStackProps extends StackProps {
    *   업로드가 이 값보다 먼저다.
    */
   poseModelBuildId: string;
+  /** Immutable library bundle key, including validated preview assets. */
+  poseLibraryKey: string;
   /**
    * converter 서비스를 만들지.
    *
@@ -590,7 +594,7 @@ export class AppStack extends Stack {
         INDEX_PATH: "/app/data/index.pkl",
         // 1단계에서는 비운다 → 합성 라이브러리로 기동한다.
         // 2단계에서는 번들을 받아 푼다. 번들이 없으면 기동에 실패한다(의도).
-        POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/pose-library/v1.tar.gz` : "",
+        POSE_LIBRARY_URI: isProd ? `s3://${assets.bucketName}/${props.poseLibraryKey}` : "",
         /**
          * Human-Art M 모델 번들. 앱 배포 워크플로가 아니라 **여기가 소유자**다
          * (Standin-server #49 리뷰에서 정리). 버킷 이름이 환경마다 다른 인프라 설정이고,
@@ -660,7 +664,7 @@ export class AppStack extends Stack {
     // 번들을 받으려면 읽기 권한이 필요하다(태스크 역할 → 키를 환경에 두지 않는다).
     assets.grantRead(inferenceTask.taskRole);
     if (props.bodyAssets) {
-      if (props.envName !== 'staging' || !props.converterEnabled || !props.fbxExportEnabled) throw new Error('body release requires staging converter and FBX export');
+      if (!props.converterEnabled || !props.fbxExportEnabled) throw new Error('body release requires converter and FBX export');
       configureBodyAssets(inferenceTask, inferenceTask.findContainer('inference')!, assets,
         ecs.ContainerImage.fromEcrRepository(props.inferenceRepo, props.imageTag), props.bodyAssets, 'inference');
     }
@@ -863,6 +867,8 @@ export class AppStack extends Stack {
       environment: {
         PORT: "8080",
         NODE_ENV: "production",
+        HAND_SELECTION_ENABLED: props.handSelectionEnabled ? "true" : "false",
+        SEMANTIC_SEARCH_ENABLED: props.semanticSearchEnabled ? "true" : "false",
         PUBLIC_URL: props.publicUrl,
         // Vercel 가입 페이지가 register/resend-verification API를 직접 호출한다.
         CORS_ORIGINS: props.corsOrigins,
@@ -1008,8 +1014,14 @@ export class AppStack extends Stack {
       logging: containerLogging(workerTask, "analysis-worker"),
       environment: {
         NODE_ENV: "production",
+        HAND_SELECTION_ENABLED: props.handSelectionEnabled ? "true" : "false",
+        SEMANTIC_SEARCH_ENABLED: props.semanticSearchEnabled ? "true" : "false",
         INFERENCE_BASE_URL: inferenceBaseUrl,
         BETA_DATA_BUCKET: betaData.bucketName,
+        REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
+        REFINE_TIMEOUT_MS: "9000",
+        FBX_EXPORT_ENABLED: props.fbxExportEnabled ? "true" : "false",
+        ...(props.converterEnabled ? { CONVERTER_BASE_URL: converterBaseUrl, CONVERTER_TIMEOUT_MS: props.bodyAssets ? "120000" : "90000" } : {}),
         ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
         WORKER_VISIBILITY_SECONDS: "180",
         WORKER_LEASE_SECONDS: "180",

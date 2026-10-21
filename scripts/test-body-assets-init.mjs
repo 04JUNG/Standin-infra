@@ -33,5 +33,17 @@ try {
   const missing=structuredClone(base);missing.files[0].roles=['converter'];
   await assert.rejects(run('inference',missing),/catalog missing/);
   await assert.rejects(install(async()=>Buffer.from('{}'),{BODY_ASSETS_ROLE:'bff',BODY_ASSETS_MANIFEST_KEY:key,BODY_ASSETS_MANIFEST_SHA256:'0'.repeat(64)}),/checksum mismatch/);
+  const shapeObjects=new Map(data);
+  const shape=structuredClone(base);
+  for(const [p,roles] of [['shape-bakes.json',['converter']],['sources/body.blend',['converter']],['sources/body.py',['converter']],['runtime/body.ssr',['bff']]]) {
+    const bytes=Buffer.from(p);shapeObjects.set(p,bytes);
+    shape.files.push({path:p,size:bytes.length,sha256:sha(bytes),roles});
+  }
+  await run('converter',shape,shapeObjects);await run('bff',shape,shapeObjects);
+  await access(path.join(root,'converter','sources/body.blend'));
+  await access(path.join(root,'bff','runtime/body.ssr'));
+  await assert.rejects(access(path.join(root,'bff','sources/body.blend')));
+  shapeObjects.set('runtime/body.ssr',Buffer.from('corrupt-runtime'));
+  await assert.rejects(run('bff',shape,shapeObjects),/checksum mismatch/);
   console.log('Node installer: role filtering, corrupt bytes, unsafe paths, duplicate paths, missing catalog, manifest pin passed');
 } finally {await rm(root,{recursive:true,force:true});}

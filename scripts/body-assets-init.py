@@ -7,7 +7,7 @@ import re
 import shutil
 import tempfile
 
-ALLOWED_PATH = re.compile(r'(?:body-catalog\.json|body-models\.json|characters\.json|(?:fbx/[a-z0-9-]+\.fbx)|(?:png/[a-z0-9-]+\.png)|(?:qa/[a-z0-9-]+\.json)|(?:preview/posed-mesh-v1/[a-f0-9]{64}\.(?:json|glb)))\Z')
+ALLOWED_PATH = re.compile(r'(?:shape-bakes\.json|sources/[a-z0-9-]+\.(?:blend|py)|runtime/[a-z0-9-]+\.ssr|body-catalog\.json|body-models\.json|characters\.json|(?:fbx/[a-z0-9-]+\.fbx)|(?:png/[a-z0-9-]+\.png)|(?:qa/[a-z0-9-]+\.json)|(?:preview/posed-mesh-v1/[a-f0-9]{64}\.(?:json|glb)))\Z')
 ROLES = {'inference', 'converter', 'bff'}
 LIMIT = 300 * 1024 * 1024
 
