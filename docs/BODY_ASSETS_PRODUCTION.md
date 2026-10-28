@@ -9,7 +9,7 @@
 - manifest SHA256: `c481055df5cd980c6918d32c9620795faaa8d3f5d764ea8ce5cbf52e5dc4745f`
 - 남성 0.7.2·여성 0.3.4의 수치 조절 가능한 20종, 기존 등록 자산, shape source/controller, SSR runtime, PNG/GLB, 각 서비스 카탈로그.
 - Converter 운영 이미지: `3f9b0993f042dd829d5f12dd87e499eae5f1cc9e`, 검증한 digest `sha256:f9ddbfde0068f95cff8c36272d71c98131116c78fc509d197e426009620154c9`.
-- 초기화 이미지는 역할별 검증한 digest로 고정한다. 신규 manifest 경로 허용 목록에는 shape-bakes, sources 및 runtime을 포함한다.
+- BFF·worker의 Node 초기화 프로그램은 본 서버와 같은 이미지를 쓴다. 앱 배포는 둘을 같은 새 digest로 갱신하고, CDK는 각 환경의 BFF 이미지(`latest`·`develop`)를 함께 사용한다. 이 태그들은 기존 ECR 보존 정책이 보호하므로 별도의 오래된 초기화 digest가 정리되는 문제를 피한다. Python 기반 추론·Converter 초기화 이미지는 역할별 검증한 digest를 유지한다. 신규 manifest 경로 허용 목록에는 shape-bakes, sources 및 runtime을 포함한다.
 - 기존 supportedPoseIds·검수·저장 권한을 유지한다. 자산 설치만으로 검수 범위를 확대하거나 저장 권한을 높이지 않는다.
 
 각 환경의 `config/*-body-assets.json`이 manifest와 Converter FBX 매핑을 선언한다. `/app/body-staging`은 카탈로그에 고정된 컨테이너 내부 경로이며, 운영에서 스테이징 S3나 서비스를 읽는다는 뜻이 아니다. 메인 컨테이너는 읽기 전용 볼륨을 사용하고 초기화가 모든 해시를 확인한 뒤에만 시작한다.

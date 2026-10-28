@@ -36,7 +36,6 @@
   },
   "initImages": {
     "converter": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/converter@sha256:39c8986a5efacc46f924ca56d9f9ecdd5026fa17bcd9de55590669d896820939",
-    "inference": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/inference@sha256:9124e652aab85622c2d0a27b811fad784c10883cdf6ee5647718ce1d908fae88",
-    "bff": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/bff@sha256:e1cddb536e70003ffd1980727844e9ca0135524503a1e9cabba63c38f7c8dfee"
+    "inference": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/inference@sha256:9124e652aab85622c2d0a27b811fad784c10883cdf6ee5647718ce1d908fae88"
   }
 }
