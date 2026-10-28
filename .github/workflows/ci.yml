@@ -33,6 +33,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Verify v4 scene staging boundaries and release publication
+        run: |
+          node -r ts-node/register scripts/assert-scene-worker.ts
+          python3 scripts/test-scene-release.py
+
       - name: Verify body asset installers
         run: |
           python3 scripts/test-body-assets-init.py
