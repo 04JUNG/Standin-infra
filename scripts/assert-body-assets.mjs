@@ -16,7 +16,11 @@ for(const task of tasks) {
   assert.ok(init);
   assert.equal(init.Essential,false);
   assert.equal(init.User,'0');
-  assert.match(init.Image,/@sha256:[a-f0-9]{64}$/);
+  if(main.Name==='bff'||main.Name==='analysis-worker') {
+    assert.deepEqual(init.Image,main.Image,'Node initializer must follow the current BFF image');
+  } else {
+    assert.match(init.Image,/@sha256:[a-f0-9]{64}$/);
+  }
   assert.ok(main.DependsOn.some(d=>d.ContainerName===init.Name&&d.Condition==='SUCCESS'));
   assert.ok(main.MountPoints.some(m=>m.SourceVolume==='body-assets'&&m.ContainerPath==='/app/body-staging'&&m.ReadOnly===true));
   assert.ok(init.MountPoints.some(m=>m.SourceVolume==='body-assets'&&m.ReadOnly===false));
