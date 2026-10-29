@@ -46,7 +46,7 @@ if (process.env.SCENE_BASE_REF) try {
   }
 } finally { unlinkSync(baselineFile); }
 
-const configured = { sceneWorkerRelease: release,
+const configured = { sceneWorkerRelease: release, sceneExportEnabled: true,
   sceneWorkerGithubSubjects: ["repo:04JUNG/Standin-server"] };
 const prepared = synth(configured);
 const active = synth({ ...configured, sceneWorkerActive: true, sceneRefinementEnabled: true });
@@ -93,6 +93,22 @@ assert(sceneIngress.every(r => r.SourceSecurityGroupId && !r.CidrIp && !r.CidrIp
 const bffContainer = (t: ReturnType<typeof synth>) => resources(t, "AWS::ECS::TaskDefinition")
   .flatMap(t => t.ContainerDefinitions).find((c: any) => c.Name === "bff");
 assert.equal(bffContainer(prepared).Environment.find((e: any) => e.Name === "SCENE_REFINEMENT_ENABLED").Value, "false");
+assert.equal(bffContainer(synth({ sceneExportEnabled: true })).Environment.find((e: any) => e.Name === "SCENE_EXPORT_ENABLED").Value, "true");
+assert(!bffContainer(synth({ sceneExportEnabled: true })).Environment.some((e: any) => e.Name === "SCENE_REFINEMENT_ENABLED"));
+assert.throws(() => synth({ sceneExportEnabled: true }, "prod"), /staging/);
+assert.throws(() => synth({ sceneExportEnabled: true, fbxExportEnabled: false }), /FBX/);
+assert.throws(() => synth({ ...configured, sceneExportEnabled: false, sceneWorkerActive: true, sceneRefinementEnabled: true }), /active singleton/);
+const legacyBody = synth({ bodyAssets: {
+  version: "test-body", manifestKey: "body-models/releases/test-body/manifest.json",
+  manifestSha256: "a".repeat(64), bodyEnvironment: {},
+  // Previously persisted JSON may still have a removed BFF image field.
+  initImages: JSON.parse(JSON.stringify({ bff: "example.invalid/expired@sha256:" + "b".repeat(64) })),
+} });
+const bodyTask = resources(legacyBody, "AWS::ECS::TaskDefinition")
+  .find(t => t.ContainerDefinitions.some((c: any) => c.Name === "bff"));
+assert.deepEqual(bodyTask.ContainerDefinitions.find((c: any) => c.Name === "body-assets-init").Image,
+  bodyTask.ContainerDefinitions.find((c: any) => c.Name === "bff").Image,
+  "staging must not restore an expired body initializer image");
 assert.equal(bffContainer(active).Environment.find((e: any) => e.Name === "SCENE_REFINEMENT_ENABLED").Value, "true");
 assert.deepEqual(bffContainer(active).Secrets.find((s: any) => s.Name === "SCENE_REFINEMENT_TOKEN").ValueFrom,
   wc.Secrets.find((s: any) => s.Name === "SCENE_REFINEMENT_TOKEN").ValueFrom);

@@ -181,6 +181,7 @@ const serviceDesiredCount = isStaging ? (stagingActive ? 1 : 0) : 1;
 const sceneWorkerConfig = String(app.node.tryGetContext("stagingSceneWorkerConfig") ?? "");
 const sceneWorkerActive = booleanContext("stagingSceneWorkerActive");
 const sceneRefinementEnabled = booleanContext("stagingSceneRefinementEnabled");
+const sceneExportEnabled = isStaging ? booleanContext("stagingSceneExportEnabled") : undefined;
 if (!isStaging && (sceneWorkerConfig || sceneWorkerActive || sceneRefinementEnabled)) {
   throw new Error("v4 scene worker is staging-only");
 }
@@ -272,6 +273,7 @@ const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp
   env,
   envName,
   sceneWorkerRelease,
+  sceneExportEnabled,
   sceneWorkerActive,
   sceneRefinementEnabled,
   sceneWorkerGithubSubjects: (githubOidcSubjectPrefixes ??

@@ -10,7 +10,7 @@ export interface BodyAssetsRelease {
   manifestSha256: string;
   bodyEnvironment: Record<string, string>;
   shapeBakeEnabled?: boolean;
-  initImages?: Partial<Record<'inference' | 'converter' | 'bff', string>>;
+  initImages?: Partial<Record<'inference' | 'converter', string>>;
 }
 
 export function configureBodyAssets(
@@ -22,7 +22,9 @@ export function configureBodyAssets(
   role: 'inference' | 'converter' | 'bff',
 ) {
   if (!/^body-models\/releases\/[a-z0-9-]+\/manifest\.json$/.test(release.manifestKey) || !/^[a-f0-9]{64}$/.test(release.manifestSha256)) throw new Error('invalid pinned body release');
-  const initImage = release.initImages?.[role];
+  // Carry the main #72 fix into staging: BFF initialization uses the runtime
+  // being deployed, not a historical digest that may have expired from ECR.
+  const initImage = role === 'bff' ? undefined : release.initImages?.[role];
   if (initImage && !/@sha256:[a-f0-9]{64}$/.test(initImage)) throw new Error('body initializer image must be digest pinned');
   const root = '/app/body-staging';
   for (const [key, value] of Object.entries(release.bodyEnvironment)) {

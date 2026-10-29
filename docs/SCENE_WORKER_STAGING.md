@@ -2,7 +2,13 @@
 
 기존 개별 `/refine`과 별개인 `src.scene_refinement` 실행 환경이다.
 앱서버와 클라이언트의 기존 v4 계약을 사용하며 `/analyze` 설정이나 제한 시간은 바꾸지 않는다.
-기본 설정에서는 worker 리소스와 BFF 환경 변수가 추가되지 않는다. 운영 환경에서는 활성화를 거부한다.
+worker 설정이 없으면 v4 리소스·연결 변수는 추가되지 않는다. 운영 환경에서는 v4 활성화를 거부한다.
+기본 통합 FBX는 별도 `stagingSceneExportEnabled=true`로 유지한다. 이는 앱서버 #141의
+스테이징 설정을 CDK에도 보존하며 v4 worker·보정 노출을 켜지 않는다. 이 값은 FBX와
+Converter가 함께 준비돼야 켤 수 있다. main/운영 통합 저장 설정은 변경하지 않는다.
+
+BFF 체형 초기화 이미지는 main #72와 같이 배포할 BFF 런타임을 공유한다.
+이전 JSON에 남은 `initImages.bff`는 사용하지 않아, 만료된 과거 digest를 CDK가 복원하지 않는다.
 
 ## 추가되는 리소스
 
@@ -119,3 +125,24 @@ worker 외의 변경이나 기존 기능 비활성화가 diff에 나오면 배�
   이 코드가 사람의 AWS 권한을 자동으로 늘리지는 않는다.
 - 한 FBX의 상대 위치와 CSP 화면상의 정확한 구도는 별개다. capture mapping과 camera recipe의
   전파·적용 문제까지 해결됐다고 주장하지 않는다.
+
+## 2026-10-29 운영자 후속 점검
+
+- BFF #142는 이미 develop에 병합됐고 Deploy 40729288774가 성공했다. 읽기 전용 ECS 조회에서
+  staging BFF revision 96, `DEPLOYMENT_VERSION=8faf293cffdc2c43c9c655a40bd11d5418525780`,
+  desired/running 1/1, 기본 `SCENE_EXPORT_ENABLED=true`를 확인했다. v4 URL/token은 아직 없고
+  v4 노출은 off다. 이 상태는 실제 사용자 저장/CSP 성공 검증을 대신하지 않는다.
+- `standin/scene-worker` 저장소와 전용 서비스/token은 아직 없었다. server staging environment는
+  이미 develop 브랜치만 허용했고 OIDC subject도 server의 기본 repo subject와 일치했다.
+- 기존 통합 body-matching 자산에서 별도의 `promoted`/license `approved` HumanArt manifest와
+  고정 calibration hash를 찾았고, pose/detector 두 실제 ONNX 파일의 SHA 일치를 확인했다.
+  앞서 본 candidate manifest를 고쳐 승인으로 바꾼 것이 아니다. 이 구성 요소를 찾았다는 사실은
+  v4 전체 catalog/BVH/rig/head-axis/CLIP release의 검토·승인 완료를 뜻하지 않는다.
+- `cdk diff --no-change-set --no-lookups -c envName=staging -c stagingActive=true`를 읽기 전용으로
+  실행했다. worker config를 넣기 전에도 기존 네 task definition 교체, body-init 로그 그룹/IAM,
+  Converter CPU 1024→2048·memory 2048→4096 등이 나타났다. 이는 배포된 CFN 템플릿과의 차이이며
+  현재 ECS runtime 자원이 실제로 해당 값이라는 뜻은 아니다. 따라서 그대로 deploy하지 않았다.
+  현재 task의 이미지·환경변수·body/library release를 보존하는 운영자 context/드리프트 정리가 먼저다.
+- 동일 SHA의 scene-worker 재사용 및 digest 배포 보완은 server의 별도 PR로 제공한다.
+- 기본 통합은 v4 없이 합성되는지, v4는 worker·FBX·기본 통합 조건 없이 노출되지 않는지 검사했다.
+  BFF/analysis-worker 초기화 이미지의 현재 runtime 공유와 기존 역할별 읽기 권한도 회귀 검사했다.

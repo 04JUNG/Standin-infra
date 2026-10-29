@@ -25,6 +25,8 @@ export interface AppStackProps extends StackProps {
   sceneWorkerRelease?: SceneWorkerRelease;
   sceneWorkerActive?: boolean;
   sceneRefinementEnabled?: boolean;
+  /** Basic scene composition is independent of the optional v4 worker. */
+  sceneExportEnabled?: boolean;
   sceneWorkerGithubSubjects?: string[];
   /** Pinned body release installed from each environment’s own assets bucket. */
   bodyAssets?: BodyAssetsRelease;
@@ -1001,11 +1003,18 @@ export class AppStack extends Stack {
       healthCheckGracePeriod: Duration.seconds(60),
     });
 
+    if (props.sceneExportEnabled !== undefined) {
+      if (props.envName !== "staging" || (props.sceneExportEnabled && (!props.converterEnabled || !props.fbxExportEnabled))) {
+        throw new Error("basic scene export requires staging with FBX and Converter enabled");
+      }
+      bffTask.findContainer("bff")!.addEnvironment("SCENE_EXPORT_ENABLED", props.sceneExportEnabled ? "true" : "false");
+    }
+
     if (props.sceneWorkerRelease) {
       if (props.envName !== "staging" || !props.fbxExportEnabled || !props.converterEnabled) {
         throw new Error("scene worker requires staging with FBX export and Converter enabled");
       }
-      if (props.sceneRefinementEnabled && (!props.sceneWorkerActive || props.serviceDesiredCount !== 1)) {
+      if (props.sceneRefinementEnabled && (!props.sceneExportEnabled || !props.sceneWorkerActive || props.serviceDesiredCount !== 1)) {
         throw new Error("scene refinement exposure requires an active singleton staging worker");
       }
       const scene = new SceneWorker(this, "SceneWorker", {
@@ -1014,7 +1023,6 @@ export class AppStack extends Stack {
         githubSubjectPrefixes: props.sceneWorkerGithubSubjects ?? [],
       });
       const bff = bffTask.findContainer("bff")!;
-      bff.addEnvironment("SCENE_EXPORT_ENABLED", "true");
       bff.addEnvironment("SCENE_REFINEMENT_ENABLED", props.sceneRefinementEnabled ? "true" : "false");
       bff.addEnvironment("SCENE_REFINEMENT_BASE_URL", scene.baseUrl);
       bff.addEnvironment("SCENE_REFINEMENT_TIMEOUT_MS", "900000");
