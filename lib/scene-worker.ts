@@ -14,10 +14,10 @@ import { validateSceneWorkerRelease, type SceneWorkerRelease } from "./scene-wor
 
 interface SceneWorkerProps {
   envName: "prod" | "staging";
-  cluster: ecs.Cluster;
-  bffSecurityGroup: ec2.SecurityGroup;
-  assets: s3.Bucket;
-  vlmSecret: secretsmanager.Secret;
+  cluster: ecs.ICluster;
+  bffSecurityGroup: ec2.ISecurityGroup;
+  assets: s3.IBucket;
+  vlmSecret: secretsmanager.ISecret;
   namespaceName: string;
   release: SceneWorkerRelease;
   active: boolean;
