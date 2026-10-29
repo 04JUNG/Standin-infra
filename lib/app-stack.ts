@@ -17,8 +17,17 @@ import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
 import type { Construct } from "constructs";
+import { SceneWorker } from "./scene-worker";
+import type { SceneWorkerRelease } from "./scene-worker-config";
 
 export interface AppStackProps extends StackProps {
+  /** Explicit staging opt-in; omitted keeps both existing environments unchanged. */
+  sceneWorkerRelease?: SceneWorkerRelease;
+  sceneWorkerActive?: boolean;
+  sceneRefinementEnabled?: boolean;
+  /** Basic scene composition is independent of the optional v4 worker. */
+  sceneExportEnabled?: boolean;
+  sceneWorkerGithubSubjects?: string[];
   /** Pinned body release installed from each environment’s own assets bucket. */
   bodyAssets?: BodyAssetsRelease;
   handSelectionEnabled: boolean;
@@ -993,6 +1002,34 @@ export class AppStack extends Stack {
       // Job은 아직 프로세스 내에서 도므로 이 시간이 유실 창을 줄여 준다.
       healthCheckGracePeriod: Duration.seconds(60),
     });
+
+    if (props.sceneExportEnabled !== undefined) {
+      if (props.envName !== "staging" || (props.sceneExportEnabled && (!props.converterEnabled || !props.fbxExportEnabled))) {
+        throw new Error("basic scene export requires staging with FBX and Converter enabled");
+      }
+      bffTask.findContainer("bff")!.addEnvironment("SCENE_EXPORT_ENABLED", props.sceneExportEnabled ? "true" : "false");
+    }
+
+    if (props.sceneWorkerRelease) {
+      if (props.envName !== "staging" || !props.fbxExportEnabled || !props.converterEnabled) {
+        throw new Error("scene worker requires staging with FBX export and Converter enabled");
+      }
+      if (props.sceneRefinementEnabled && (!props.sceneExportEnabled || !props.sceneWorkerActive || props.serviceDesiredCount !== 1)) {
+        throw new Error("scene refinement exposure requires an active singleton staging worker");
+      }
+      const scene = new SceneWorker(this, "SceneWorker", {
+        envName: props.envName, cluster, bffSecurityGroup: bffSg, assets, vlmSecret,
+        namespaceName, release: props.sceneWorkerRelease, active: !!props.sceneWorkerActive,
+        githubSubjectPrefixes: props.sceneWorkerGithubSubjects ?? [],
+      });
+      const bff = bffTask.findContainer("bff")!;
+      bff.addEnvironment("SCENE_REFINEMENT_ENABLED", props.sceneRefinementEnabled ? "true" : "false");
+      bff.addEnvironment("SCENE_REFINEMENT_BASE_URL", scene.baseUrl);
+      bff.addEnvironment("SCENE_REFINEMENT_TIMEOUT_MS", "900000");
+      bff.addSecret("SCENE_REFINEMENT_TOKEN", ecs.Secret.fromSecretsManager(scene.token));
+    } else if (props.sceneWorkerActive || props.sceneRefinementEnabled) {
+      throw new Error("scene worker release is required before activation");
+    }
 
     if (props.bodyAssets) configureBodyAssets(bffTask, bffTask.findContainer('bff')!, assets,
       ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag), props.bodyAssets, 'bff');
