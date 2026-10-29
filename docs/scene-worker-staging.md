@@ -21,3 +21,9 @@ silently reconciled. BFF connection must preserve the current task definition,
 images, initializers, unrelated environment and secrets, modifying only the scene
 URL/token/timeout/refinement flag after private readiness and a fresh smoke pass.
 Back up the previous task ARN and roll back to it if real save verification fails.
+
+The staging ALB idle timeout is 930 seconds, above the BFF scene preparation
+budget of 900 seconds. The production timeout remains 60 seconds. When the
+existing AppStack has drift, review and apply only this ALB attribute instead
+of deploying unrelated task definitions. Read back the actual attribute after
+changing it, and record the previous value for rollback.
