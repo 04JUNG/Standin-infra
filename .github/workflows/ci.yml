@@ -44,6 +44,9 @@ jobs:
           python3 scripts/test-body-assets-init.py
           node scripts/test-body-assets-init.mjs
 
+      - name: Verify replay environment isolation and private storage
+        run: node -r ts-node/register scripts/assert-replay.ts
+
       - name: Build
         run: npm run build
 

@@ -875,3 +875,38 @@ Gemini 호출 비용이 별도로 붙으므로 `stagingQuotaGlobalDaily`를 낮�
 체형 커스텀, 수치 조절, 손 선택과 자연어 검색의 배포 순서·비활성화·검증 범위는
 [체형 자산 운영 등록 지침](docs/BODY_ASSETS_PRODUCTION.md)을 따른다.
 [2026-10-12 스테이징 9종 등록](docs/BODY_ASSETS_STAGING.md)은 이전 릴리스 기록이다.
+
+## 리플레이 배포 설정
+
+리플레이의 환경 분류는 `NODE_ENV`와 독립적이다. 두 환경 모두 Node 최적화를 위해
+`NODE_ENV=production`을 유지하지만, BFF의 `REPLAY_ENVIRONMENT`는 배포 대상에 따라
+`staging` / `production`으로 명시한다. 환경마다 전용 비공개 `ReplayBucket`을 사용하며,
+버전 관리 없이 30일 후 만료한다. BFF만 `replays/*` 읽기·쓰기·삭제 권한을 가진다.
+애플리케이션의 동의 철회·삭제·만료 처리도 그대로 적용된다.
+
+| CDK context | 기본값 | 역할 |
+| --- | --- | --- |
+| `stagingReplayEnabled` | `true` | 스테이징 리플레이 수집·관리자 열람 |
+| `productionReplayEnabled` | `false` | 운영 리플레이 수집·관리자 열람, 스테이징과 독립 |
+| `stagingReplayConsentMode` | `assumed` | 개발·스테이징 검증 정책 |
+| `productionReplayConsentMode` | `explicit` | 운영은 명시적 동의만 허용 |
+| `stagingReplayCaptureEnabled` / `productionReplayCaptureEnabled` | `true` | 캡처 기록 세부 스위치 |
+| `stagingReplayCspEnabled` / `productionReplayCspEnabled` | `true` | CSP 결과 캡처 세부 스위치 |
+
+스테이징을 켜도 운영은 켜지지 않는다. 운영 병합 후에는 운영 배포에서
+`-c productionReplayEnabled=true`로 별도 활성화한다. 지속적인 활성화는 운영 context에도
+같은 값을 저장한다. 이때 기존 운영 배포의 다른 context와 이미지 pin을 유지한다.
+운영 클라이언트는 별도 repository variable `PRODUCTION_REPLAY_ENABLED=true`로 릴리스한다.
+릴리스 workflow는 `VITE_APP_ENV=production`,
+`VITE_REPLAY_CONSENT_MODE=explicit` 및 리플레이 활성화 설정을 빌드에 주입한다.
+스테이징 클라이언트 변수는 `STAGING_REPLAY_ENABLED`이며 기본 `true`다.
+명시적 동의가 없는 설치는 수집·열람 대상에서 제외된다. `assumed`를 운영에 사용하는
+설정은 synth 단계에서 거부한다.
+
+검증: `npm run typecheck` 및 `npx ts-node scripts/assert-replay.ts`.
+환경별 플래그 독립성·동의 조건·저장소 보관 기간·BFF 연결·접근권한을 확인한다.
+
+2026-11-07 스테이징 조치는 기존 CloudFormation 템플릿에 `ReplayBucket`·TLS 강제
+버킷 정책·`ReplayAccess`만 추가하고, 실행 중이던 BFF 태스크의 이미지·기타 설정을
+보존해 리플레이 환경변수만 갱신하는 방식으로 진행한다. 전체 CDK 배포로 기존 수동
+배포 설정을 덮어쓰지 않는다. 이후 CDK 전체 배포 전에는 기존 배포와의 diff를 확인한다.

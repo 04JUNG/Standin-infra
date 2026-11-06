@@ -16,11 +16,13 @@ import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
+import { replayConfig, type ReplayDeploymentConfig } from "./replay-config";
 import type { Construct } from "constructs";
 import { SceneWorker } from "./scene-worker";
 import type { SceneWorkerRelease } from "./scene-worker-config";
 
 export interface AppStackProps extends StackProps {
+  replay?: ReplayDeploymentConfig;
   /** Explicit staging opt-in; omitted keeps both existing environments unchanged. */
   sceneWorkerRelease?: SceneWorkerRelease;
   sceneWorkerActive?: boolean;
@@ -326,6 +328,21 @@ export class AppStack extends Stack {
       lifecycleRules: [{ id: "ExpireBetaInputs", expiration: Duration.days(90) }],
       removalPolicy: dataRemovalPolicy,
       autoDeleteObjects: !isPrimary,
+    });
+
+    // Separate from 90-day beta inputs: replay has 30-day retention and no versions.
+    const replay = props.replay ?? replayConfig(props.envName, () => undefined);
+    if (props.envName === "prod" && replay.consentMode !== "explicit") {
+      throw new Error("Production replay requires explicit consent");
+    }
+    const replayStorage = new s3.Bucket(this, "ReplayBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: false,
+      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+      lifecycleRules: [{ id: "ExpireReplayObjects", expiration: Duration.days(30) }],
+      removalPolicy: RemovalPolicy.RETAIN,
     });
 
     const jwtSecret = new secretsmanager.Secret(this, "JwtSecret", {
@@ -868,6 +885,15 @@ export class AppStack extends Stack {
     });
 
     betaData.grantReadWrite(bffTask.taskRole);
+    new iam.Policy(this, "ReplayAccess", {
+      roles: [bffTask.taskRole],
+      statements: [
+        new iam.PolicyStatement({ actions: ["s3:ListBucket"], resources: [replayStorage.bucketArn],
+          conditions: { StringLike: { "s3:prefix": ["replays/*"] } } }),
+        new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          resources: [replayStorage.arnForObjects("replays/*")] }),
+      ],
+    });
 
     bffTask.addContainer("bff", {
       startTimeout: props.bodyAssets ? Duration.seconds(120) : undefined,
@@ -876,6 +902,12 @@ export class AppStack extends Stack {
       environment: {
         PORT: "8080",
         NODE_ENV: "production",
+        REPLAY_ENVIRONMENT: props.envName === "staging" ? "staging" : "production",
+        REPLAY_ENABLED: String(replay.enabled),
+        CAPTURE_REPLAY_ENABLED: String(replay.captureEnabled),
+        CSP_RESULT_CAPTURE_ENABLED: String(replay.cspEnabled),
+        REPLAY_CONSENT_MODE: replay.consentMode,
+        REPLAY_BUCKET: replayStorage.bucketName,
         HAND_SELECTION_ENABLED: props.handSelectionEnabled ? "true" : "false",
         SEMANTIC_SEARCH_ENABLED: props.semanticSearchEnabled ? "true" : "false",
         PUBLIC_URL: props.publicUrl,
