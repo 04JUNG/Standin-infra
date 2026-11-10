@@ -31,9 +31,9 @@ export function configureBodyAssets(
     if (!/^BODY_[A-Z0-9_]+_URI$/.test(key) || !/^\/app\/body-staging\/fbx\/[a-z0-9-]+\.fbx$/.test(value)) throw new Error('invalid body registry environment');
   }
   const environment = role === 'inference'
-    ? { BODY_CATALOG_PATH: `${root}/body-catalog.json`, BODY_MATCHING_MODE: 'auto', BODY_VLM_PROVIDER: 'gemini', BODY_VLM_MODEL: 'gemini-flash-lite-latest', BODY_TIMEOUT_SECONDS: '45', ROUTING_FULLBODY_ENABLED: '1', ROUTING_PREPARE_ASSETS: '1', POSE_CALIBRATION_FROM_MANIFEST: '1', POSE_MODEL_VARIANT: 'humanart-m', VLM_PERSON_TAGS: '1' }
+    ? { BODY_CATALOG_PATH: `${root}/body-catalog.json`, BODY_MATCHING_MODE: 'off', BODY_VLM_PROVIDER: 'gemini', BODY_VLM_MODEL: 'gemini-flash-lite-latest', BODY_TIMEOUT_SECONDS: '45', ROUTING_FULLBODY_ENABLED: '1', ROUTING_PREPARE_ASSETS: '1', POSE_CALIBRATION_FROM_MANIFEST: '1', POSE_MODEL_VARIANT: 'humanart-m', VLM_PERSON_TAGS: '1' }
     : role === 'bff'
-      ? { BODY_CATALOG_PATH: `${root}/body-models.json`, BODY_SELECTION_ENABLED: 'true', BODY_UX_ENABLED: 'true', ...(release.shapeBakeEnabled ? { BODY_SHAPE_EDIT_ENABLED: 'true', BODY_SHAPE_BAKE_ENABLED: 'true', CONVERTER_SHAPE_TIMEOUT_MS: '320000' } : {}) }
+      ? { BODY_CATALOG_PATH: `${root}/body-models.json`, BODY_SELECTION_ENABLED: 'true', BODY_RECOMMENDATION_ENABLED: 'false', BODY_UX_ENABLED: 'true', ...(release.shapeBakeEnabled ? { BODY_SHAPE_EDIT_ENABLED: 'true', BODY_SHAPE_BAKE_ENABLED: 'true', CONVERTER_SHAPE_TIMEOUT_MS: '320000' } : {}) }
       : { CONVERTER_CHARACTER_REGISTRY: `${root}/characters.json`, POSE_PREVIEW_URI: `${root}/preview`, ...(release.shapeBakeEnabled ? { CONVERTER_SHAPE_REGISTRY: `${root}/shape-bakes.json`, CONVERTER_SHAPE_TIMEOUT_SECONDS: '300' } : {}), ...release.bodyEnvironment };
   for (const [name, value] of Object.entries(environment)) main.addEnvironment(name, value);
   task.addVolume({ name: 'body-assets' });
