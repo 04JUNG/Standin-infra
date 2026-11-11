@@ -7,6 +7,7 @@ import type { BodyAssetsRelease } from "../lib/body-assets";
 import { RegistryStack } from "../lib/registry-stack";
 import { AppStack } from "../lib/app-stack";
 import { CicdStack } from "../lib/cicd-stack";
+import { validateSceneWorkerRelease } from "../lib/scene-worker-config";
 
 const app = new cdk.App();
 
@@ -176,6 +177,24 @@ if (!oauthSuccessRedirect.includes("://")) {
 const stagingActive = booleanContext("stagingActive");
 const serviceDesiredCount = isStaging ? (stagingActive ? 1 : 0) : 1;
 
+// No worker resources or BFF flag changes unless an operator supplies this file.
+const sceneWorkerConfig = String(app.node.tryGetContext("stagingSceneWorkerConfig") ?? "");
+const sceneWorkerActive = booleanContext("stagingSceneWorkerActive");
+const sceneRefinementEnabled = booleanContext("stagingSceneRefinementEnabled");
+const sceneExportEnabled = isStaging ? booleanContext("stagingSceneExportEnabled") : undefined;
+if (!isStaging && (sceneWorkerConfig || sceneWorkerActive || sceneRefinementEnabled)) {
+  throw new Error("v4 scene worker is staging-only");
+}
+if ((sceneWorkerActive || sceneRefinementEnabled) && !sceneWorkerConfig) {
+  throw new Error("stagingSceneWorkerConfig is required before v4 activation");
+}
+if (sceneWorkerActive && !stagingActive) {
+  throw new Error("stagingSceneWorkerActive requires stagingActive=true");
+}
+const sceneWorkerRelease = sceneWorkerConfig
+  ? validateSceneWorkerRelease(JSON.parse(readFileSync(sceneWorkerConfig, "utf8")))
+  : undefined;
+
 /**
  * 전체 일일 상한. 앱의 QUOTA_GLOBAL_DAILY로 들어간다.
  *
@@ -253,6 +272,13 @@ new CicdStack(app, "StandinCicd", {
 const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp", {
   env,
   envName,
+  sceneWorkerRelease,
+  sceneExportEnabled,
+  sceneWorkerActive,
+  sceneRefinementEnabled,
+  sceneWorkerGithubSubjects: (githubOidcSubjectPrefixes ??
+    githubRepos.map(repo => `repo:${githubOrg}/${repo}`)).filter(prefix =>
+      /\/Standin-server(?:@\d+)?$/.test(prefix)),
   bffRepo: registry.bffRepo,
   inferenceRepo: registry.inferenceRepo,
   converterRepo: registry.converterRepo,

@@ -17,7 +17,7 @@ for(const task of tasks) {
   assert.equal(init.Essential,false);
   assert.equal(init.User,'0');
   if(main.Name==='bff'||main.Name==='analysis-worker') {
-    assert.deepEqual(init.Image,main.Image,'Node initializer must follow the current BFF image');
+    assert.deepEqual(init.Image,main.Image,'Node initializer must use the deployed BFF runtime');
   } else {
     assert.match(init.Image,/@sha256:[a-f0-9]{64}$/);
   }

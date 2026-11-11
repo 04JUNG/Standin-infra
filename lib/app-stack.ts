@@ -17,8 +17,17 @@ import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
 import type { Construct } from "constructs";
+import { SceneWorker } from "./scene-worker";
+import type { SceneWorkerRelease } from "./scene-worker-config";
 
 export interface AppStackProps extends StackProps {
+  /** Explicit staging opt-in; omitted keeps both existing environments unchanged. */
+  sceneWorkerRelease?: SceneWorkerRelease;
+  sceneWorkerActive?: boolean;
+  sceneRefinementEnabled?: boolean;
+  /** Basic scene composition is independent of the optional v4 worker. */
+  sceneExportEnabled?: boolean;
+  sceneWorkerGithubSubjects?: string[];
   /** Pinned body release installed from each environment’s own assets bucket. */
   bodyAssets?: BodyAssetsRelease;
   handSelectionEnabled: boolean;
@@ -626,6 +635,11 @@ export class AppStack extends Stack {
         // 추론의 기본값은 REFINE_ENABLED=1이라, 적어 두지 않으면 조정본 영속화가
         // 검증되기도 전에 켜진 채로 뜬다.
         REFINE_ENABLED: props.refineEnabled ? "1" : "0",
+        ...(props.envName === "prod" ? {
+          REFINE_V2_ENABLED: "1", REFINE_DEFAULT_MODE: "aggressive",
+          REFINE_V25_SELECTOR_ENABLED: "1", REFINE_V2_TORSO: "0",
+          REFINE_V3_MODE: "off", REFINE_V3_EVIDENCE_ENABLED: "0", REFINE_RELEASE_ENABLED: "0",
+        } : {}),
         REFINE_MOVE_GATE: "0", // P2 이동량 하드 게이트 보류(진단은 계속 기록)
         REFINE_COLLISION_GATE: "1", // P3a 손·전완-몸통 관통 복구
       },
@@ -888,6 +902,7 @@ export class AppStack extends Stack {
          * 추론 → BFF 순으로 켠다.
          */
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
+        ...(props.envName === "prod" ? { REFINE_RELEASE_ENABLED: "0", REFINE_V3_SHADOW: "false" } : {}),
         /**
          * BFF가 추론 `/refine`을 기다리는 상한. 추론 solver 예산(`REFINE_TIMEOUT_SECONDS`
          * 기본 5.0초)보다 **반드시 커야 한다**(BFF `config.ts` 주석). 같으면 solver가 예산을
@@ -994,6 +1009,34 @@ export class AppStack extends Stack {
       healthCheckGracePeriod: Duration.seconds(60),
     });
 
+    if (props.sceneExportEnabled !== undefined) {
+      if (props.envName !== "staging" || (props.sceneExportEnabled && (!props.converterEnabled || !props.fbxExportEnabled))) {
+        throw new Error("basic scene export requires staging with FBX and Converter enabled");
+      }
+      bffTask.findContainer("bff")!.addEnvironment("SCENE_EXPORT_ENABLED", props.sceneExportEnabled ? "true" : "false");
+    }
+
+    if (props.sceneWorkerRelease) {
+      if (props.envName !== "staging" || !props.fbxExportEnabled || !props.converterEnabled) {
+        throw new Error("scene worker requires staging with FBX export and Converter enabled");
+      }
+      if (props.sceneRefinementEnabled && (!props.sceneExportEnabled || !props.sceneWorkerActive || props.serviceDesiredCount !== 1)) {
+        throw new Error("scene refinement exposure requires an active singleton staging worker");
+      }
+      const scene = new SceneWorker(this, "SceneWorker", {
+        envName: props.envName, cluster, bffSecurityGroup: bffSg, assets, vlmSecret,
+        namespaceName, release: props.sceneWorkerRelease, active: !!props.sceneWorkerActive,
+        githubSubjectPrefixes: props.sceneWorkerGithubSubjects ?? [],
+      });
+      const bff = bffTask.findContainer("bff")!;
+      bff.addEnvironment("SCENE_REFINEMENT_ENABLED", props.sceneRefinementEnabled ? "true" : "false");
+      bff.addEnvironment("SCENE_REFINEMENT_BASE_URL", scene.baseUrl);
+      bff.addEnvironment("SCENE_REFINEMENT_TIMEOUT_MS", "900000");
+      bff.addSecret("SCENE_REFINEMENT_TOKEN", ecs.Secret.fromSecretsManager(scene.token));
+    } else if (props.sceneWorkerActive || props.sceneRefinementEnabled) {
+      throw new Error("scene worker release is required before activation");
+    }
+
     if (props.bodyAssets) configureBodyAssets(bffTask, bffTask.findContainer('bff')!, assets,
       ecs.ContainerImage.fromEcrRepository(props.bffRepo, props.imageTag), props.bodyAssets, 'bff');
 
@@ -1019,13 +1062,14 @@ export class AppStack extends Stack {
         INFERENCE_BASE_URL: inferenceBaseUrl,
         BETA_DATA_BUCKET: betaData.bucketName,
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
+        ...(props.envName === "prod" ? { REFINE_RELEASE_ENABLED: "0", REFINE_V3_SHADOW: "false" } : {}),
         REFINE_TIMEOUT_MS: "9000",
         FBX_EXPORT_ENABLED: props.fbxExportEnabled ? "true" : "false",
         ...(props.converterEnabled ? { CONVERTER_BASE_URL: converterBaseUrl, CONVERTER_TIMEOUT_MS: props.bodyAssets ? "120000" : "90000" } : {}),
         ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
         WORKER_VISIBILITY_SECONDS: "180",
         WORKER_LEASE_SECONDS: "180",
-        ANALYSIS_TIMEOUT_MS: "120000",
+        ANALYSIS_TIMEOUT_MS: "180000",
         DATABASE_SSL: "true",
         PGDATABASE: "standin",
         DISCORD_ALERT_MENTION: discordAlertMention,
@@ -1379,7 +1423,8 @@ export class AppStack extends Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       // Aligned candidate renders have a bounded 300-second BFF request.
       // Keep the staging connection alive long enough to return that result.
-      idleTimeout: Duration.seconds(props.envName === "staging" ? 330 : 60),
+      // Scene v4 has a 900s BFF budget; allow its response to reach staging clients.
+      idleTimeout: Duration.seconds(props.envName === "staging" ? 930 : 60),
     });
 
     const httpsListener = alb.addListener("Https", {

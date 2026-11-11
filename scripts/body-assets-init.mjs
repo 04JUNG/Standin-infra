@@ -11,7 +11,7 @@ export async function install(fetch, env = process.env) {
   const role = env.BODY_ASSETS_ROLE;
   const key = env.BODY_ASSETS_MANIFEST_KEY;
   const expected = env.BODY_ASSETS_MANIFEST_SHA256;
-  if (!roles.has(role) || !/^body-models\/releases\/[a-z0-9-]+\/manifest\.json$/.test(key ?? '') || !/^[a-f0-9]{64}$/.test(expected ?? '')) throw new Error('invalid pinned body manifest');
+  if (!roles.has(role) || !/^body-models\/releases\/[a-z0-9-]+(?:\/presets-[a-f0-9]{12})?\/manifest\.json$/.test(key ?? '') || !/^[a-f0-9]{64}$/.test(expected ?? '')) throw new Error('invalid pinned body manifest');
   const raw = await fetch(key, 65536);
   if (raw.length > 65536 || sha(raw) !== expected) throw new Error('body manifest checksum mismatch');
   const manifest = JSON.parse(raw.toString('utf8'));
