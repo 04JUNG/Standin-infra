@@ -7,7 +7,7 @@ process.env.BODY_ASSETS_INIT_TEST='1';
 const { install } = await import('./body-assets-init.mjs');
 const sha=d=>createHash('sha256').update(d).digest('hex');
 const root=await mkdtemp(path.join(os.tmpdir(),'body-init-test-'));
-const key='body-models/releases/test-v1/manifest.json';
+let key='body-models/releases/test-v1/manifest.json';
 const data=new Map([['body-catalog.json',Buffer.from('{}')],['body-models.json',Buffer.from('{}')],['characters.json',Buffer.from('{}')],['fbx/test.fbx',Buffer.from('fbx-bytes')]]);
 const base={schema:'body-assets.v1',version:'test-v1',files:[...data].map(([p,d])=>({path:p,size:d.length,sha256:sha(d),roles:p.startsWith('fbx/')?['inference','converter']:p==='body-catalog.json'?['inference']:p==='characters.json'?['converter']:['bff']}))};
 async function run(role,manifest=base,objects=data) {
@@ -45,5 +45,11 @@ try {
   await assert.rejects(access(path.join(root,'bff','sources/body.blend')));
   shapeObjects.set('runtime/body.ssr',Buffer.from('corrupt-runtime'));
   await assert.rejects(run('bff',shape,shapeObjects),/checksum mismatch/);
+  key='body-models/releases/test-v1/presets-0897cb6c18fd/manifest.json';
+  await run('bff');
+  for(const segment of ['../escape','presets-not-a-digest','presets-0897cb6c18fd/extra']) {
+    key=`body-models/releases/test-v1/${segment}/manifest.json`;
+    await assert.rejects(run('bff'),/invalid pinned body manifest/);
+  }
   console.log('Node installer: role filtering, corrupt bytes, unsafe paths, duplicate paths, missing catalog, manifest pin passed');
 } finally {await rm(root,{recursive:true,force:true});}

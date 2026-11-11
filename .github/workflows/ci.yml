@@ -43,6 +43,7 @@ jobs:
         run: |
           python3 scripts/test-body-assets-init.py
           node scripts/test-body-assets-init.mjs
+          node -r ts-node/register scripts/assert-body-pins.ts
 
       - name: Build
         run: npm run build
