@@ -1062,7 +1062,7 @@ export class AppStack extends Stack {
         ANALYSIS_QUEUE_URL: analysisQueue.queueUrl,
         WORKER_VISIBILITY_SECONDS: "180",
         WORKER_LEASE_SECONDS: "180",
-        ANALYSIS_TIMEOUT_MS: "120000",
+        ANALYSIS_TIMEOUT_MS: "180000",
         DATABASE_SSL: "true",
         PGDATABASE: "standin",
         DISCORD_ALERT_MENTION: discordAlertMention,
