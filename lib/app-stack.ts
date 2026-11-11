@@ -637,6 +637,14 @@ export class AppStack extends Stack {
         REFINE_ENABLED: props.refineEnabled ? "1" : "0",
         REFINE_MOVE_GATE: "0", // P2 이동량 하드 게이트 보류(진단은 계속 기록)
         REFINE_COLLISION_GATE: "1", // P3a 손·전완-몸통 관통 복구
+        // Staging rollback: legacy v2.5.4 safe-aggressive. Keep the master kill switch above.
+        // Production receives no new flags until a separate, reviewed main promotion.
+        ...(props.envName === "staging" ? {
+          REFINE_RELEASE_ENABLED: "0",
+          REFINE_V2_ENABLED: "1",
+          REFINE_DEFAULT_MODE: "aggressive",
+          REFINE_V25_SELECTOR_ENABLED: "1",
+        } : {}),
       },
       secrets: {
         GEMINI_API_KEY: ecs.Secret.fromSecretsManager(vlmSecret, "geminiApiKey"),
@@ -897,6 +905,7 @@ export class AppStack extends Stack {
          * 추론 → BFF 순으로 켠다.
          */
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
+        ...(props.envName === "staging" ? { REFINE_RELEASE_ENABLED: "0" } : {}),
         /**
          * BFF가 추론 `/refine`을 기다리는 상한. 추론 solver 예산(`REFINE_TIMEOUT_SECONDS`
          * 기본 5.0초)보다 **반드시 커야 한다**(BFF `config.ts` 주석). 같으면 solver가 예산을
@@ -1056,6 +1065,7 @@ export class AppStack extends Stack {
         INFERENCE_BASE_URL: inferenceBaseUrl,
         BETA_DATA_BUCKET: betaData.bucketName,
         REFINE_FEATURE_ENABLED: props.refineFeatureEnabled ? "true" : "false",
+        ...(props.envName === "staging" ? { REFINE_RELEASE_ENABLED: "0" } : {}),
         REFINE_TIMEOUT_MS: "9000",
         FBX_EXPORT_ENABLED: props.fbxExportEnabled ? "true" : "false",
         ...(props.converterEnabled ? { CONVERTER_BASE_URL: converterBaseUrl, CONVERTER_TIMEOUT_MS: props.bodyAssets ? "120000" : "90000" } : {}),

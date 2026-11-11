@@ -102,6 +102,9 @@ jobs:
       - name: Verify staging refine flags mirror production
         run: node scripts/assert-refine-flags.mjs 1 true cdk.out-staging/StandinStagingApp.template.json
 
+      - name: Verify staging legacy refine and unchanged production policy
+        run: node scripts/assert-staging-legacy-refine.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
+
       - name: Verify prod and staging never share a physical name
         run: node scripts/assert-env-isolation.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
 
