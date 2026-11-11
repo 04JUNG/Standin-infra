@@ -24,7 +24,7 @@ class InstallerTests(unittest.TestCase):
         raw = json.dumps(self.manifest).encode()
         env = dict(BODY_ASSETS_ROLE=role, BODY_ASSETS_MANIFEST_KEY=self.key, BODY_ASSETS_MANIFEST_SHA256=hashlib.sha256(raw).hexdigest(), BODY_ASSETS_ROOT=str(self.root/role))
         def fetch(key, limit):
-            return raw if key == self.key else self.data[key.removeprefix('body-models/releases/test-v1/')]
+            return raw if key == self.key else self.data[key.removeprefix(self.key.rsplit('/', 1)[0] + '/')]
         return module.install(fetch, env)
 
     def test_all_roles_install_only_their_files(self):
@@ -63,6 +63,22 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((self.root/'bff'/'sources/body.blend').exists())
         self.data['runtime/body.ssr'] = b'corrupt-runtime'
         with self.assertRaises(ValueError): self.run_install('bff')
+
+    def test_nested_preset_release_is_pinned_and_path_safe(self):
+        self.key = 'body-models/releases/test-v1/presets-0897cb6c18fd/manifest.json'
+        self.assertEqual(self.run_install('bff')['files'], 1)
+        for suffix in ['../escape', 'presets-not-a-digest', 'presets-0897cb6c18fd/extra']:
+            self.key = 'body-models/releases/test-v1/' + suffix + '/manifest.json'
+            with self.assertRaisesRegex(ValueError, 'invalid pinned body manifest'):
+                self.run_install('bff')
+
+    def test_reviewed_converter_bundle_has_a_bounded_total(self):
+        # Metadata only: reject oversized releases before any payload is fetched.
+        for n in range(4):
+            self.manifest['files'].append(dict(path=f'fbx/large-{n}.fbx', size=200*1024*1024,
+                sha256='0'*64, roles=['converter']))
+        with self.assertRaisesRegex(ValueError, 'body release size exceeded'):
+            self.run_install('converter')
 
     def test_manifest_is_pinned(self):
         env=dict(BODY_ASSETS_ROLE='bff',BODY_ASSETS_MANIFEST_KEY=self.key,BODY_ASSETS_MANIFEST_SHA256='0'*64,BODY_ASSETS_ROOT=str(self.root))
