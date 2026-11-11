@@ -15,6 +15,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import { configureProductionParity } from "./production-parity";
 import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
 import type { Construct } from "constructs";
 import { SceneWorker } from "./scene-worker";
@@ -1117,6 +1118,19 @@ export class AppStack extends Stack {
       maxHealthyPercent: 200,
     });
 
+    // Match develop product capabilities using production-owned data and service authentication.
+    const productionInteractiveToken = isPrimary && props.bodyAssets
+      ? new secretsmanager.Secret(this, "ProductionInteractiveToken", {
+          secretName: "standin/production/converter-interactive-token",
+          generateSecretString: { passwordLength: 48, excludePunctuation: true },
+        }) : undefined;
+    if (productionInteractiveToken) {
+      if (props.serviceDesiredCount !== 1) throw new Error("local interactive artifacts require one Converter instance");
+      configureProductionParity(inferenceTask, assets, "inference", productionInteractiveToken, betaData);
+      configureProductionParity(bffTask, assets, "bff", productionInteractiveToken, betaData);
+      configureProductionParity(workerTask, assets, "analysis-worker", productionInteractiveToken, betaData);
+    }
+
     // ── FBX converter(선택) ──────────────────────────────────────
     //
     // Blender 5.2를 번들한 amd64 이미지다(추론과 다른 아키텍처라 저장소도 따로 둔다).
@@ -1205,6 +1219,8 @@ export class AppStack extends Stack {
           if (props.bodyAssets) configureBodyAssets(converterTask, converterTask.findContainer('converter')!, assets,
             ecs.ContainerImage.fromEcrRepository(props.converterRepo, props.converterImageTag), props.bodyAssets, 'converter');
 
+          if (productionInteractiveToken) configureProductionParity(converterTask, assets, "converter", productionInteractiveToken, betaData, ecs.ContainerImage.fromEcrRepository(props.converterRepo, props.converterImageTag));
+
           return new ecs.FargateService(this, "ConverterService", {
             cluster,
             taskDefinition: converterTask,
@@ -1219,9 +1235,9 @@ export class AppStack extends Stack {
               dnsTtl: Duration.seconds(10),
             },
             circuitBreaker: { rollback: true },
-            availabilityZoneRebalancing: ecs.AvailabilityZoneRebalancing.ENABLED,
-            minHealthyPercent: 100,
-            maxHealthyPercent: 200,
+            availabilityZoneRebalancing: productionInteractiveToken ? ecs.AvailabilityZoneRebalancing.DISABLED : ecs.AvailabilityZoneRebalancing.ENABLED,
+            minHealthyPercent: productionInteractiveToken ? 0 : 100,
+            maxHealthyPercent: productionInteractiveToken ? 100 : 200,
           });
         })()
       : undefined;

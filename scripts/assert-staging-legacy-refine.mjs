@@ -20,6 +20,11 @@ for (const name of ['inference', 'bff', 'analysis-worker']) {
   const prod = containers(production).filter(c => c.Name === name);
   assert.equal(prod.length, 1);
   const prodEnv = Object.fromEntries(prod[0].Environment.map(e => [e.Name, e.Value]));
-  for (const key of Object.keys(expected)) assert.equal(prodEnv[key], undefined, `production ${name}:${key} unchanged`);
+  assert.equal(prodEnv.REFINE_RELEASE_ENABLED, '0', `production ${name}: RC4 disabled`);
+  if (name === 'inference') {
+    for (const [key, value] of Object.entries(expected)) assert.equal(prodEnv[key], value, `production ${key}`);
+    assert.equal(prodEnv.REFINE_V3_MODE, 'off');
+    assert.equal(prodEnv.REFINE_V2_TORSO, '0');
+  } else assert.equal(prodEnv.REFINE_V3_SHADOW, 'false');
 }
-console.log('Staging: legacy aggressive + safety selector; RC4 disabled across all callers. Production policy unchanged.');
+console.log('Staging: legacy aggressive + safety selector; RC4 disabled across all callers. Production promotion pins the same legacy policy.');

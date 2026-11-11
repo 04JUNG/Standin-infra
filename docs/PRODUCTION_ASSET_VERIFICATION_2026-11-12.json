@@ -1,0 +1,12 @@
+{
+  "version": "develop-parity-20261112",
+  "source": "standinstagingapp-assetsbucket5cb76180-fiwlikrhl1sk",
+  "target": "standinapp-assetsbucket5cb76180-rhs7xpvmvhbo",
+  "apply": false,
+  "objects": 11998,
+  "bytes": 12483437008,
+  "counts": {
+    "existing": 11998
+  },
+  "inventorySha256": "d16d949996a442d04cb116d6cd854bdaa7ea959359cb0177b1ae8fc9149aabb1"
+}

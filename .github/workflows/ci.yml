@@ -42,6 +42,7 @@ jobs:
       - name: Verify body asset installers
         run: |
           python3 scripts/test-body-assets-init.py
+          python3 scripts/test-production-assets.py
           node scripts/test-body-assets-init.mjs
           node -r ts-node/register scripts/assert-body-pins.ts
 
@@ -102,8 +103,10 @@ jobs:
       - name: Verify staging refine flags mirror production
         run: node scripts/assert-refine-flags.mjs 1 true cdk.out-staging/StandinStagingApp.template.json
 
-      - name: Verify staging legacy refine and unchanged production policy
-        run: node scripts/assert-staging-legacy-refine.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
+      - name: Verify production parity and shared legacy refine policy
+        run: |
+          node scripts/assert-staging-legacy-refine.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
+          node scripts/assert-production-parity.mjs cdk.out-prod/StandinApp.template.json
 
       - name: Verify prod and staging never share a physical name
         run: node scripts/assert-env-isolation.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json

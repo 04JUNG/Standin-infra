@@ -37,11 +37,10 @@ for (const role of ['converter', 'bff', 'inference'] as const) {
     assert.equal(rendered.main.CONVERTER_CHARACTER_ID, 'male-base-v0-8-0');
     assert.equal(rendered.init.Image, 'example/runtime:test');
   } else assert.equal(rendered.init.Image, staging.initImages![role]);
-  // Existing production releases remain valid and keep their original pin/default policy.
-  const legacy = synth(production, role);
-  assert.equal(legacy.pin.BODY_ASSETS_MANIFEST_KEY, production.manifestKey);
-  assert.equal(legacy.pin.BODY_ASSETS_MANIFEST_SHA256, production.manifestSha256);
-  assert.equal(legacy.main.CONVERTER_CHARACTER_ID, undefined);
+  const promoted = synth(production, role);
+  assert.equal(promoted.pin.BODY_ASSETS_MANIFEST_KEY, key, 'production matches approved develop role release');
+  assert.equal(promoted.pin.BODY_ASSETS_MANIFEST_SHA256, expected[role]);
+  if (role === 'bff') assert.equal(promoted.main.CONVERTER_CHARACTER_ID, 'male-base-v0-8-0');
 }
 for (const manifestKey of ['body-models/releases/test/../escape/manifest.json', 'body-models/releases/test/presets-invalid/manifest.json']) {
   const invalid = structuredClone(staging);
@@ -51,4 +50,4 @@ for (const manifestKey of ['body-models/releases/test/../escape/manifest.json', 
 const invalidHash = structuredClone(staging);
 invalidHash.manifests!.converter!.manifestSha256 = 'latest';
 assert.throws(() => synth(invalidHash, 'converter'), /invalid pinned body release/);
-console.log('Staging role pins, default model, scoped IAM, unsafe paths and unchanged production pins passed');
+console.log('Staging role pins, default model, scoped IAM, unsafe paths and identical production pins passed');
