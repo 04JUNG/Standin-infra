@@ -77,7 +77,7 @@
     "//stagingImageTag": "staging 태스크 정의가 참조하는 ECR 태그. develop 빌드가 이 태그를 옮긴다.",
     "stagingImageTag": "develop",
     "//stagingQuotaGlobalDaily": "staging도 실제 Gemini를 호출한다 — 상한을 낮게 둬 테스트가 예산을 태우지 않게 한다.",
-    "stagingQuotaGlobalDaily": "50",
+    "stagingQuotaGlobalDaily": "75",
     "//stagingPoseModelBuildId": "staging에 먼저 올려 검증한 뒤 프로덕션 poseModelBuildId를 채운다.",
     "stagingPoseModelBuildId": "20260828.codex1-fp32-cpu-raw-simcc",
     "//stagingConverterImageTag": "검증한 staging converter 이미지는 develop 태그로 푸시한다. 프로덕션 latest로 되돌아가지 않도록 분리한다.",
