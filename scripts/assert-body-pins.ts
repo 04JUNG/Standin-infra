@@ -23,7 +23,7 @@ function synth(release: BodyAssetsRelease, role: BodyAssetRole) {
 }
 
 const expected = {
-  converter: '995f97e272fa96c7081d2a60cbd6e3c0a2d3f5cfcd5fb8e88bdd09eaa5c8b143',
+  converter: '8149c15685398ba279550a9887fa8d05b5208e26b60264e6fa55a6cc20a09771',
   bff: '0897cb6c18fdef3e24b945bc2df9b09e8e7f65579130a98127e97c72264a97cc',
   inference: '9acb2ee7ec2444706107b5d1c5b264866dc35bdfc8918a31cbec997d12fc9d72',
 };

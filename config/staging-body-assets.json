@@ -4,8 +4,8 @@
   "manifestSha256": "9acb2ee7ec2444706107b5d1c5b264866dc35bdfc8918a31cbec997d12fc9d72",
   "manifests": {
     "converter": {
-      "manifestKey": "body-models/releases/anatomy-skins-20261112-995f97e272fa-converter/manifest.json",
-      "manifestSha256": "995f97e272fa96c7081d2a60cbd6e3c0a2d3f5cfcd5fb8e88bdd09eaa5c8b143"
+      "manifestKey": "body-models/releases/anatomy-composed-skins-20261112-8149c1568539-converter/manifest.json",
+      "manifestSha256": "8149c15685398ba279550a9887fa8d05b5208e26b60264e6fa55a6cc20a09771"
     },
     "bff": {
       "manifestKey": "body-models/releases/anatomy-20261111-5ab242a0112a-bff/presets-0897cb6c18fd/manifest.json",
