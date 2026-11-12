@@ -45,6 +45,9 @@ jobs:
           node scripts/test-body-assets-init.mjs
           node -r ts-node/register scripts/assert-body-pins.ts
 
+      - name: Verify replay environment isolation and private storage
+        run: node -r ts-node/register scripts/assert-replay.ts
+
       - name: Build
         run: npm run build
 

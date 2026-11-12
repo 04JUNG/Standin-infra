@@ -9,6 +9,8 @@ import { AppStack } from "../lib/app-stack";
 import { CicdStack } from "../lib/cicd-stack";
 import { validateSceneWorkerRelease } from "../lib/scene-worker-config";
 
+import { replayConfig } from "../lib/replay-config";
+
 const app = new cdk.App();
 
 // 계정·리전은 배포 환경에서 주입한다(코드에 하드코딩하지 않는다).
@@ -272,6 +274,7 @@ new CicdStack(app, "StandinCicd", {
 const appStack = new AppStack(app, isStaging ? "StandinStagingApp" : "StandinApp", {
   env,
   envName,
+  replay: replayConfig(envName, name => app.node.tryGetContext(name)),
   sceneWorkerRelease,
   sceneExportEnabled,
   sceneWorkerActive,
