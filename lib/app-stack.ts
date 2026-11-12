@@ -876,8 +876,9 @@ export class AppStack extends Stack {
     };
 
     const bffTask = new ecs.FargateTaskDefinition(this, "BffTask", {
-      cpu: 512,
-      memoryLimitMiB: 1024,
+      // Keep HTTP/polling responsive while a bounded worker validates large 3D packets.
+      cpu: props.envName === "prod" ? 1024 : 512,
+      memoryLimitMiB: props.envName === "prod" ? 2048 : 1024,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.ARM64, // Graviton — 같은 성능에 더 싸다
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
