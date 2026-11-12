@@ -84,4 +84,33 @@ class InstallerTests(unittest.TestCase):
         env=dict(BODY_ASSETS_ROLE='bff',BODY_ASSETS_MANIFEST_KEY=self.key,BODY_ASSETS_MANIFEST_SHA256='0'*64,BODY_ASSETS_ROOT=str(self.root))
         with self.assertRaises(ValueError):module.install(lambda key,limit:b'{}',env)
 
+    def test_prepared_budget_is_bounded_and_converter_only(self):
+        files = [dict(path=f'fbx/base-{n}.fbx', size=256*1024*1024, roles=['converter']) for n in range(3)]
+        files += [dict(path='fbx/prepared-'+'a'*64+'.fbx', size=10*1024*1024, roles=['converter']),
+                  dict(path='qa/prepared-'+'a'*64+'.json', size=100, roles=['converter'])]
+        self.assertEqual(module.check_budget(files, module.PREPARED_PROFILE), 960*1024*1024)
+        with self.assertRaises(ValueError): module.check_budget(files)
+        for role in ['inference','bff']:
+            with self.assertRaises(ValueError): module.check_budget(files, module.PREPARED_PROFILE, role)
+        with self.assertRaises(ValueError): module.check_budget(files, 'unbounded')
+        files[0]['size'] += 1
+        with self.assertRaises(ValueError): module.check_budget(files, module.PREPARED_PROFILE)
+
+    def test_prepared_budget_requires_small_paired_hash_named_files(self):
+        fbx=dict(path='fbx/prepared-'+'a'*64+'.fbx', size=10, roles=['converter'])
+        qa=dict(path='qa/prepared-'+'a'*64+'.json', size=10, roles=['converter'])
+        for files in [[fbx], [qa], [fbx,dict(qa,size=256*1024+1)],
+                      [dict(fbx,size=64*1024*1024+1),qa], [dict(fbx,roles=['bff']),qa]]:
+            with self.assertRaises(ValueError): module.check_budget(files,module.PREPARED_PROFILE)
+
+    def test_prepared_corruption_leaves_old_install_and_rollback_restores_catalog(self):
+        self.run_install('converter')
+        old=(self.root/'converter/characters.json').read_bytes()
+        self.data['characters.json']=b'corrupt'
+        with self.assertRaises(ValueError):self.run_install('converter')
+        self.assertEqual((self.root/'converter/characters.json').read_bytes(),old)
+        self.data['characters.json']=b'{}'
+        self.run_install('converter')
+        self.assertEqual((self.root/'converter/characters.json').read_bytes(),old)
+
 if __name__=='__main__':unittest.main()
