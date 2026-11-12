@@ -4,8 +4,8 @@
   "manifestSha256": "9acb2ee7ec2444706107b5d1c5b264866dc35bdfc8918a31cbec997d12fc9d72",
   "manifests": {
     "converter": {
-      "manifestKey": "body-models/releases/anatomy-composed-skins-20261112-8149c1568539-converter/presets-ecb22102fd47/manifest.json",
-      "manifestSha256": "ecb22102fd47658f6fed2f6421166dccf83ffa8b866c2e7a686f9bb8abd985cd"
+      "manifestKey": "body-models/releases/prepared-all20-production-20261113-f0169b4813d7/manifest.json",
+      "manifestSha256": "f0169b4813d70877e924965e0cc9f212b499aabac52c1cf6a4848e41858968a5"
     },
     "bff": {
       "manifestKey": "body-models/releases/anatomy-20261111-5ab242a0112a-bff/presets-0897cb6c18fd/manifest.json",
@@ -90,7 +90,7 @@
     "BODY_TEEN_MALE_URI": "/app/body-staging/fbx/teen-male.fbx"
   },
   "initImages": {
-    "converter": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/converter@sha256:39c8986a5efacc46f924ca56d9f9ecdd5026fa17bcd9de55590669d896820939",
+    "converter": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/converter@sha256:a4d731fe35682f3e97f2bbeb53e188c3f43fd2bdc3f6da6a89cedb41ab2c5fd6",
     "inference": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/inference@sha256:60dc4a1374667517d294b143971d7b24506e41f9ad249ad077a2b11a0a20e35b"
   },
   "appearanceEnabled": true
