@@ -32,6 +32,15 @@ assert.equal(inference.POSE_THUMBNAIL_OVERLAY_SHA256,profile.thumbnailSha256);
 for(const name of ['inference','bff','analysis-worker']) assert.equal(env(get(name)).REFINE_RELEASE_ENABLED,'0');
 assert.equal(inference.REFINE_DEFAULT_MODE,'aggressive');assert.equal(inference.REFINE_V25_SELECTOR_ENABLED,'1');
 const bff=get('bff'),converter=get('converter');
+assert.equal(new Set(profile.accessPolicy.operatorInstallationIds).size,3,'exactly three explicit operator installations');
+assert.ok(Number.isFinite(Date.parse(profile.accessPolicy.openBetaEndedAt)),'fixed beta closure time');
+for (const name of ['bff','analysis-worker']) {
+  const access=env(get(name));
+  assert.equal(access.ACCESS_GATE_ENABLED,'true',`${name}: code access gate remains enabled`);
+  assert.equal(access.SUPPORTER_ACCESS_ENABLED,'true',`${name}: registered codes stay usable`);
+  assert.equal(access.ACCESS_OPERATOR_INSTALLATIONS,profile.accessPolicy.operatorInstallationIds.join(','));
+  assert.equal(access.OPEN_BETA_ENDED_AT,profile.accessPolicy.openBetaEndedAt);
+}
 assert.ok(JSON.stringify(converter.Image).includes(profile.converterImageDigest),'same verified immutable Converter image');
 assert.equal(env(bff).INTERACTIVE_STATE_ENABLED,'true');
 assert.equal(env(converter).CONVERTER_INTERACTIVE_ENABLED,'true');

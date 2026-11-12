@@ -34,5 +34,15 @@
     "Standin-infra": "95547b337ebc3233b39e2351ad628f157b6b7654"
   },
   "poseLibraryVersion": "lib-20261110-da2ead1e",
-  "converterImageDigest": "sha256:5b87c09b8a0710fb764dbce972ff23afda2e9793b125ed911fd99f7a6c4c7a9f"
+  "converterImageDigest": "sha256:5b87c09b8a0710fb764dbce972ff23afda2e9793b125ed911fd99f7a6c4c7a9f",
+  "accessPolicy": {
+    "enabled": true,
+    "supporterEnabled": true,
+    "openBetaEndedAt": "2026-11-12T03:46:01Z",
+    "operatorInstallationIds": [
+      "inst_1aed1085-2727-4e68-b589-88db0de97c05",
+      "inst_afec2e61-1f5f-4875-8b69-3a99b7f8a4c9",
+      "inst_cc6832df-05a9-450f-9fb5-1e5f69b1e38c"
+    ]
+  }
 }
