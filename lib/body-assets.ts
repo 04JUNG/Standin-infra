@@ -46,7 +46,7 @@ export function configureBodyAssets(
       : { CONVERTER_CHARACTER_REGISTRY: `${root}/characters.json`, POSE_PREVIEW_URI: `${root}/preview`, ...(release.shapeBakeEnabled ? { CONVERTER_SHAPE_REGISTRY: `${root}/shape-bakes.json`, CONVERTER_SHAPE_TIMEOUT_SECONDS: '300' } : {}), ...release.bodyEnvironment };
   for (const [name, value] of Object.entries(environment)) main.addEnvironment(name, value);
   if (release.appearanceEnabled) {
-    if (!Stack.of(task).stackName.startsWith('StandinStagingApp')) throw new Error('appearance rollout is staging-only');
+    if (!['StandinApp', 'StandinStagingApp'].some(prefix => Stack.of(task).stackName.startsWith(prefix))) throw new Error('appearance rollout requires an approved app stack');
     const values = role === 'converter'
       ? { CONVERTER_SKIN_ENABLED: 'true', CONVERTER_OUTLINE_ENABLED: 'true', CONVERTER_SKIN_ASSET_ROOT: `${root}/skin` }
       : role === 'bff' ? { SKIN_EXPORT_ENABLED: 'true', OUTLINE_EXPORT_ENABLED: 'true' } : {};

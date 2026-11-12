@@ -1,8 +1,8 @@
 {
   "version": "develop-parity-20261112",
-  "poseLibraryKey": "pose-library/releases/lib-20261110-da2ead1e-search-12eec403a8fc-71d764a6e5bf.tar.gz",
-  "thumbnailKey": "pose-library/thumbnail-releases/outline-3503-8efe80558480.tar.gz",
-  "thumbnailSha256": "8efe805584800a668f30b53fafa08a2beeeaa4bd0feaaa8147e1b56b2e718d78",
+  "poseLibraryKey": "pose-library/releases/lib-20261112-f5c4b224-standing-library-d856d042d0a0.tar.gz",
+  "thumbnailKey": "pose-library/thumbnail-releases/lib-20261112-f5c4b224-standing-overlay-3eb8168d0a65.tar.gz",
+  "thumbnailSha256": "3eb8168d0a65afb0b45ed0a52fe22ccdda05d5f40969162f0134248502e65aa3",
   "previewPrefix": "pose-previews/releases/props-r7-20261103",
   "reviewedKey": "pose-library/reviewed-fbx-releases/reviewed58-fbx-f5ab8cedce09.tar.gz",
   "reviewedArchiveSha256": "f5ab8cedce0954f57017a79f54a452ace8609290c9eaa58d2a63d0a2e2fc9379",
@@ -12,11 +12,11 @@
   "previewInventorySha256": "1c6c06ac49e640406e820dcab84a687ac7a60ebfdc7c852006986152cd0669cc",
   "previewObjects": 11725,
   "previewBytes": 7046780604,
-  "poseLibrarySha256": "71d764a6e5bf62b2baffd45f990b9be56d6e7fdb5907ec62eafcc751336f2506",
+  "poseLibrarySha256": "d856d042d0a077ccecf834fcf95cd96bac04d492e5b9161bfabb8f969b343e32",
   "bodyManifests": {
     "converter": {
-      "manifestKey": "body-models/releases/anatomy-presets-20261111-f590cdb9f4ed-converter/manifest.json",
-      "manifestSha256": "f590cdb9f4ed0a78fb331bdde90c715c526c1314ce03d046432ac8eeaf3bf973"
+      "manifestKey": "body-models/releases/anatomy-composed-skins-20261112-8149c1568539-converter/manifest.json",
+      "manifestSha256": "8149c15685398ba279550a9887fa8d05b5208e26b60264e6fa55a6cc20a09771"
     },
     "bff": {
       "manifestKey": "body-models/releases/anatomy-20261111-5ab242a0112a-bff/presets-0897cb6c18fd/manifest.json",
@@ -33,8 +33,8 @@
     "Standin-client": "94c587d13296fa59e516c0e906a14310fe7cb78c",
     "Standin-infra": "95547b337ebc3233b39e2351ad628f157b6b7654"
   },
-  "poseLibraryVersion": "lib-20261110-da2ead1e",
-  "converterImageDigest": "sha256:5b87c09b8a0710fb764dbce972ff23afda2e9793b125ed911fd99f7a6c4c7a9f",
+  "poseLibraryVersion": "lib-20261112-f5c4b224",
+  "converterImageDigest": "sha256:de012829c8bc42901271d20e5f50eb87c709c0d465a14cc4675a69326988465f",
   "accessPolicy": {
     "enabled": true,
     "supporterEnabled": true,

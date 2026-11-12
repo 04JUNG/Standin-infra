@@ -12,10 +12,10 @@ const env=c=>Object.fromEntries(c.Environment.map(e=>[e.Name,e.Value]));
 const profile=JSON.parse(readFileSync('config/production-runtime-parity.json','utf8'));
 const body=JSON.parse(readFileSync('config/production-body-assets.json','utf8'));
 const stage=JSON.parse(readFileSync('config/staging-body-assets.json','utf8'));
-// New staging appearance assets are opt-in; main must retain its approved production pins.
+// Production appearance uses an explicitly approved, immutable release pin.
 assert.deepEqual(body.manifests,profile.bodyManifests,'production pins match the frozen approved runtime profile');
 assert.equal(body.defaultCharacterId,stage.defaultCharacterId,'same default model identity');
-assert.equal(body.appearanceEnabled,undefined,'appearance activation requires a separate production rollout');
+assert.equal(body.appearanceEnabled,true,'approved production appearance rollout enabled');
 const inference=env(get('inference'));
 const inferenceTask=tasks.find(t=>t.Properties.ContainerDefinitions.some(c=>c.Name==='inference'));
 assert.equal(inferenceTask.Properties.Cpu,'4096','preserve deployed production CPU');
