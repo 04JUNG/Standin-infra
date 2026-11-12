@@ -29,6 +29,7 @@ for (const [name,value] of Object.entries({ROUTING_FULLBODY_ENABLED:'1',
   assert.equal(inference[name],value,`complete fullbody startup: ${name}`);
 assert.equal(inference.SEMANTIC_REVIEWED_PROPS_FIRST,'1');
 assert.equal(inference.HAND_SKIN_SCREEN_CONCURRENCY,'2');
+assert.equal(inference.HAND_SKIN_SCREEN_ON_SELECTION,'0','hand quality screening is outside the selected pose/body validation policy');
 assert.ok(JSON.stringify(inference.POSE_LIBRARY_URI).includes(profile.poseLibraryKey));
 assert.ok(JSON.stringify(inference.POSE_THUMBNAIL_OVERLAY_URI).includes(profile.thumbnailKey));
 assert.equal(inference.POSE_THUMBNAIL_OVERLAY_SHA256,profile.thumbnailSha256);

@@ -13,7 +13,7 @@ export function configureProductionParity(task: ecs.FargateTaskDefinition, asset
   const uri = (key: string) => `s3://${assets.bucketName}/${key}`;
   const add = (env: Record<string, string>) => { for (const [k,v] of Object.entries(env)) main.addEnvironment(k,v); };
   if (role === "inference") {
-    add({BODY_MATCHING_MODE:"off", HAND_SKIN_SCREEN_CONCURRENCY:"2", HAND_SKIN_SCREEN_ON_SELECTION:"1",
+    add({BODY_MATCHING_MODE:"off", HAND_SKIN_SCREEN_CONCURRENCY:"2", HAND_SKIN_SCREEN_ON_SELECTION:"0",
       SEMANTIC_REVIEWED_PROPS_FIRST:"1", POSE_LIBRARY_VERSION:profile.poseLibraryVersion, POSE_LIBRARY_URI:uri(profile.poseLibraryKey),
       POSE_THUMBNAIL_OVERLAY_URI:uri(profile.thumbnailKey), POSE_THUMBNAIL_OVERLAY_SHA256:profile.thumbnailSha256,
       ROUTING_FULLBODY_ENABLED:"1", ROUTING_PREPARE_ASSETS:"1", ROUTING_LUNA_SIX_FIELD_ENABLED:"1",
