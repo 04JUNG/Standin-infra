@@ -15,8 +15,8 @@
   "poseLibrarySha256": "d856d042d0a077ccecf834fcf95cd96bac04d492e5b9161bfabb8f969b343e32",
   "bodyManifests": {
     "converter": {
-      "manifestKey": "body-models/releases/anatomy-composed-skins-20261112-8149c1568539-converter/manifest.json",
-      "manifestSha256": "8149c15685398ba279550a9887fa8d05b5208e26b60264e6fa55a6cc20a09771"
+      "manifestKey": "body-models/releases/anatomy-composed-skins-20261112-8149c1568539-converter/presets-ecb22102fd47/manifest.json",
+      "manifestSha256": "ecb22102fd47658f6fed2f6421166dccf83ffa8b866c2e7a686f9bb8abd985cd"
     },
     "bff": {
       "manifestKey": "body-models/releases/anatomy-20261111-5ab242a0112a-bff/presets-0897cb6c18fd/manifest.json",
