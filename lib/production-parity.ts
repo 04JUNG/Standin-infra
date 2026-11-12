@@ -17,6 +17,8 @@ export function configureProductionParity(task: ecs.FargateTaskDefinition, asset
       SEMANTIC_REVIEWED_PROPS_FIRST:"1", POSE_LIBRARY_VERSION:profile.poseLibraryVersion, POSE_LIBRARY_URI:uri(profile.poseLibraryKey),
       POSE_THUMBNAIL_OVERLAY_URI:uri(profile.thumbnailKey), POSE_THUMBNAIL_OVERLAY_SHA256:profile.thumbnailSha256,
       ROUTING_FULLBODY_ENABLED:"1", ROUTING_PREPARE_ASSETS:"1", ROUTING_LUNA_SIX_FIELD_ENABLED:"1",
+      POSE_BACKEND:"rtmlib", POSE_MODEL_VARIANT:"humanart-m", POSE_CANARY_STAGE:"canary-100",
+      POSE_STRICT:"1", POSE_CALIBRATION_FROM_MANIFEST:"1",
       VLM_PROVIDER:"openai", OPENAI_MODEL:"gpt-6-luna", OPENAI_REASONING_EFFORT:"low", VLM_PERSON_TAGS:"0",
       ROUTING_RECALL_ASSETS_DIR:"/app/data/recall-90-v1", ROUTING_RECALL_ASSETS_URI:uri(profile.recallKey),
       ROUTING_RECALL_ASSETS_SHA256:profile.recallSha256, ROUTING_RECALL_PROP_PYTHON:"/opt/recall-prop/bin/python"});

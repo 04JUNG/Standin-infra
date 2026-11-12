@@ -12,6 +12,12 @@ const stage=JSON.parse(readFileSync('config/staging-body-assets.json','utf8'));
 assert.deepEqual(body,stage,'approved body bytes/pins match develop');
 const inference=env(get('inference'));
 assert.equal(inference.BODY_MATCHING_MODE,'off');
+// Match the reviewed main prepare_fullbody_deployment.py contract. A partial
+// rollout cannot start Human-Art even when its model bundle is installed.
+for (const [name,value] of Object.entries({ROUTING_FULLBODY_ENABLED:'1',
+  ROUTING_PREPARE_ASSETS:'1',POSE_BACKEND:'rtmlib',POSE_MODEL_VARIANT:'humanart-m',
+  POSE_CANARY_STAGE:'canary-100',POSE_STRICT:'1',POSE_CALIBRATION_FROM_MANIFEST:'1'}))
+  assert.equal(inference[name],value,`complete fullbody startup: ${name}`);
 assert.equal(inference.SEMANTIC_REVIEWED_PROPS_FIRST,'1');
 assert.equal(inference.HAND_SKIN_SCREEN_CONCURRENCY,'2');
 assert.ok(JSON.stringify(inference.POSE_LIBRARY_URI).includes(profile.poseLibraryKey));
