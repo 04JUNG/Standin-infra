@@ -17,6 +17,7 @@ import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { configureProductionParity } from "./production-parity";
 import { configureBodyAssets, type BodyAssetsRelease } from "./body-assets";
+import { configureStagingFinalCache } from "./final-cache";
 import type { Construct } from "constructs";
 import { SceneWorker } from "./scene-worker";
 import type { SceneWorkerRelease } from "./scene-worker-config";
@@ -1216,6 +1217,8 @@ export class AppStack extends Stack {
 
           // 캐릭터 아티팩트를 받으려면 읽기 권한이 필요하다(키를 환경에 두지 않는다).
           assets.grantRead(converterTask.taskRole);
+          if (props.envName === 'staging') configureStagingFinalCache(
+            converterTask, converterTask.findContainer('converter')!, assets);
           if (props.bodyAssets) configureBodyAssets(converterTask, converterTask.findContainer('converter')!, assets,
             ecs.ContainerImage.fromEcrRepository(props.converterRepo, props.converterImageTag), props.bodyAssets, 'converter');
 

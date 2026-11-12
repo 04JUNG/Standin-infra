@@ -108,6 +108,9 @@ jobs:
           node scripts/assert-staging-legacy-refine.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
           node scripts/assert-production-parity.mjs cdk.out-prod/StandinApp.template.json
 
+      - name: Verify staging private final FBX cache scope
+        run: node scripts/assert-final-cache.mjs
+
       - name: Verify prod and staging never share a physical name
         run: node scripts/assert-env-isolation.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
 
