@@ -1,0 +1,8 @@
+{
+  "releaseId": "v4-staging-release-001",
+  "manifestSha256": "<SHA256 of reviewed release.json>",
+  "bundleKey": "scene-releases/v4-staging-release-001.tar.gz",
+  "bundleSha256": "<SHA256 of the exact tar.gz bytes>",
+  "imageTag": "<full Standin-server develop commit SHA>",
+  "vlmModel": "<explicit approved Gemini model ID>"
+}

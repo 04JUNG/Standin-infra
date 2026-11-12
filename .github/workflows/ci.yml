@@ -33,10 +33,18 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Verify v4 scene staging boundaries and release publication
+        run: |
+          node -r ts-node/register scripts/assert-scene-worker.ts
+          node -r ts-node/register scripts/assert-scene-worker-stack.ts
+          python3 scripts/test-scene-release.py
+
       - name: Verify body asset installers
         run: |
           python3 scripts/test-body-assets-init.py
+          python3 scripts/test-production-assets.py
           node scripts/test-body-assets-init.mjs
+          node -r ts-node/register scripts/assert-body-pins.ts
 
       - name: Build
         run: npm run build
@@ -94,6 +102,14 @@ jobs:
       # staging은 프로덕션 컨텍스트를 그대로 물려받는다 — 갈라지면 여기서 걸린다.
       - name: Verify staging refine flags mirror production
         run: node scripts/assert-refine-flags.mjs 1 true cdk.out-staging/StandinStagingApp.template.json
+
+      - name: Verify production parity and shared legacy refine policy
+        run: |
+          node scripts/assert-staging-legacy-refine.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json
+          node scripts/assert-production-parity.mjs cdk.out-prod/StandinApp.template.json
+
+      - name: Verify staging private final FBX cache scope
+        run: node scripts/assert-final-cache.mjs
 
       - name: Verify prod and staging never share a physical name
         run: node scripts/assert-env-isolation.mjs cdk.out-prod/StandinApp.template.json cdk.out-staging/StandinStagingApp.template.json

@@ -1,0 +1,38 @@
+{
+  "version": "develop-parity-20261112",
+  "poseLibraryKey": "pose-library/releases/lib-20261110-da2ead1e-search-12eec403a8fc-71d764a6e5bf.tar.gz",
+  "thumbnailKey": "pose-library/thumbnail-releases/outline-3503-8efe80558480.tar.gz",
+  "thumbnailSha256": "8efe805584800a668f30b53fafa08a2beeeaa4bd0feaaa8147e1b56b2e718d78",
+  "previewPrefix": "pose-previews/releases/props-r7-20261103",
+  "reviewedKey": "pose-library/reviewed-fbx-releases/reviewed58-fbx-f5ab8cedce09.tar.gz",
+  "reviewedArchiveSha256": "f5ab8cedce0954f57017a79f54a452ace8609290c9eaa58d2a63d0a2e2fc9379",
+  "reviewedManifestSha256": "897c6a2a03edd1f9c8089ae1d2854e0def9f5389a5b4f898b7f1aee431549237",
+  "recallKey": "pose-library/runtime-assets/recall-90-v1/recall-models-839a2d0a9ea54c5e.tar",
+  "recallSha256": "839a2d0a9ea54c5e4fade054bbf631a06d19945f4398771a3d094eede96c62d7",
+  "previewInventorySha256": "1c6c06ac49e640406e820dcab84a687ac7a60ebfdc7c852006986152cd0669cc",
+  "previewObjects": 11725,
+  "previewBytes": 7046780604,
+  "poseLibrarySha256": "71d764a6e5bf62b2baffd45f990b9be56d6e7fdb5907ec62eafcc751336f2506",
+  "bodyManifests": {
+    "converter": {
+      "manifestKey": "body-models/releases/anatomy-presets-20261111-f590cdb9f4ed-converter/manifest.json",
+      "manifestSha256": "f590cdb9f4ed0a78fb331bdde90c715c526c1314ce03d046432ac8eeaf3bf973"
+    },
+    "bff": {
+      "manifestKey": "body-models/releases/anatomy-20261111-5ab242a0112a-bff/presets-0897cb6c18fd/manifest.json",
+      "manifestSha256": "0897cb6c18fdef3e24b945bc2df9b09e8e7f65579130a98127e97c72264a97cc"
+    },
+    "inference": {
+      "manifestKey": "body-models/releases/staging-9-20261012-9acb2ee7ec24/manifest.json",
+      "manifestSha256": "9acb2ee7ec2444706107b5d1c5b264866dc35bdfc8918a31cbec997d12fc9d72"
+    }
+  },
+  "sourceCommits": {
+    "Standin-server": "b89447329d305d9367300a613ff45e173bd3753a",
+    "Standin-app-server": "ee46827290fb02cecaddb29d4810bb0717cee86c",
+    "Standin-client": "94c587d13296fa59e516c0e906a14310fe7cb78c",
+    "Standin-infra": "95547b337ebc3233b39e2351ad628f157b6b7654"
+  },
+  "poseLibraryVersion": "lib-20261110-da2ead1e",
+  "converterImageDigest": "sha256:5b87c09b8a0710fb764dbce972ff23afda2e9793b125ed911fd99f7a6c4c7a9f"
+}

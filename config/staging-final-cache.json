@@ -1,0 +1,9 @@
+{
+  "version": "staging-verified-final-cache-v1",
+  "bucket": "standinstagingapp-assetsbucket5cb76180-fiwlikrhl1sk",
+  "dataPrefix": "verified-final-data/v1/",
+  "libraryKey": "verified-final-control/library-fac97ffeef5f38b87ad95bd91cdbac93f9c0281de0d1a1b577af613c1a0bc575.json",
+  "librarySha256": "fac97ffeef5f38b87ad95bd91cdbac93f9c0281de0d1a1b577af613c1a0bc575",
+  "revocationsKey": "verified-final-control/revoked.json",
+  "sourceArchiveSha256": "71d764a6e5bf62b2baffd45f990b9be56d6e7fdb5907ec62eafcc751336f2506"
+}

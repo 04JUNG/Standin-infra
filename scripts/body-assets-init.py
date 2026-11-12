@@ -17,7 +17,7 @@ def install(fetch, env=os.environ):
         raise ValueError('invalid body asset role')
     key = env['BODY_ASSETS_MANIFEST_KEY']
     expected = env['BODY_ASSETS_MANIFEST_SHA256']
-    if not re.fullmatch(r'body-models/releases/[a-z0-9-]+/manifest\.json', key) or not re.fullmatch(r'[a-f0-9]{64}', expected):
+    if not re.fullmatch(r'body-models/releases/[a-z0-9-]+(?:/presets-[a-f0-9]{12})?/manifest\.json', key) or not re.fullmatch(r'[a-f0-9]{64}', expected):
         raise ValueError('invalid pinned body manifest')
     raw = fetch(key, 65536)
     if len(raw) > 65536 or hashlib.sha256(raw).hexdigest() != expected:
@@ -39,7 +39,7 @@ def install(fetch, env=os.environ):
             raise ValueError('invalid body asset roles')
         seen.add(path)
         total += size
-    if total > LIMIT:
+    if total > 768 * 1024 * 1024:
         raise ValueError('body release size exceeded')
     selected = [f for f in files if role in f['roles']]
     required = {'inference': 'body-catalog.json', 'converter': 'characters.json', 'bff': 'body-models.json'}[role]
