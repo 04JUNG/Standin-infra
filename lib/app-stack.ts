@@ -1455,9 +1455,10 @@ export class AppStack extends Stack {
       internetFacing: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       // Aligned candidate renders have a bounded 300-second BFF request.
-      // Keep the staging connection alive long enough to return that result.
+      // Keep the connection alive long enough to return that result, including
+      // production: its former 60s limit cancelled valid first-time FBX exports.
       // Scene v4 has a 900s BFF budget; allow its response to reach staging clients.
-      idleTimeout: Duration.seconds(props.envName === "staging" ? 930 : 60),
+      idleTimeout: Duration.seconds(props.envName === "staging" ? 930 : 330),
     });
 
     const httpsListener = alb.addListener("Https", {
