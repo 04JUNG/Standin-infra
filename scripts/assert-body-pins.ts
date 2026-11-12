@@ -9,7 +9,7 @@ import { configureBodyAssets, type BodyAssetRole, type BodyAssetsRelease } from 
 const staging: BodyAssetsRelease = JSON.parse(readFileSync('config/staging-body-assets.json', 'utf8'));
 const production: BodyAssetsRelease = JSON.parse(readFileSync('config/production-body-assets.json', 'utf8'));
 function synth(release: BodyAssetsRelease, role: BodyAssetRole) {
-  const stack = new Stack(new App(), 'PinTest');
+  const stack = new Stack(new App(), release.appearanceEnabled ? 'StandinStagingAppPinTest' : 'PinTest');
   const task = new ecs.FargateTaskDefinition(stack, 'Task');
   const image = ecs.ContainerImage.fromRegistry('example/runtime:test');
   const main = task.addContainer('runtime', { image });
@@ -23,7 +23,7 @@ function synth(release: BodyAssetsRelease, role: BodyAssetRole) {
 }
 
 const expected = {
-  converter: 'f590cdb9f4ed0a78fb331bdde90c715c526c1314ce03d046432ac8eeaf3bf973',
+  converter: 'eb70160769a1b1577576f99d3862f84ef1f6f595b402f574fae7c03cd7a00edc',
   bff: '0897cb6c18fdef3e24b945bc2df9b09e8e7f65579130a98127e97c72264a97cc',
   inference: '9acb2ee7ec2444706107b5d1c5b264866dc35bdfc8918a31cbec997d12fc9d72',
 };
@@ -35,6 +35,8 @@ for (const role of ['converter', 'bff', 'inference'] as const) {
   assert.ok(JSON.stringify(rendered.template).includes(key.slice(0, key.lastIndexOf('/')) + '/*'), 'grant read only under the selected role release');
   if (role === 'bff') {
     assert.equal(rendered.main.CONVERTER_CHARACTER_ID, 'male-base-v0-8-0');
+    assert.equal(rendered.main.SKIN_EXPORT_ENABLED, 'true');
+    assert.equal(rendered.main.OUTLINE_EXPORT_ENABLED, 'true');
     assert.equal(rendered.init.Image, 'example/runtime:test');
   } else assert.equal(rendered.init.Image, staging.initImages![role]);
   // Existing production releases remain valid and keep their original pin/default policy.
@@ -42,6 +44,8 @@ for (const role of ['converter', 'bff', 'inference'] as const) {
   assert.equal(legacy.pin.BODY_ASSETS_MANIFEST_KEY, production.manifestKey);
   assert.equal(legacy.pin.BODY_ASSETS_MANIFEST_SHA256, production.manifestSha256);
   assert.equal(legacy.main.CONVERTER_CHARACTER_ID, undefined);
+  assert.equal(legacy.main.SKIN_EXPORT_ENABLED, undefined);
+  assert.equal(legacy.main.CONVERTER_SKIN_ENABLED, undefined);
 }
 for (const manifestKey of ['body-models/releases/test/../escape/manifest.json', 'body-models/releases/test/presets-invalid/manifest.json']) {
   const invalid = structuredClone(staging);

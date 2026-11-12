@@ -30,7 +30,14 @@ for(const task of tasks) {
     for(const flag of ['BODY_SELECTION_ENABLED','BODY_UX_ENABLED','BODY_SHAPE_EDIT_ENABLED','BODY_SHAPE_BAKE_ENABLED'])assert.equal(env[flag],'true');
     assert.equal(env.CONVERTER_SHAPE_TIMEOUT_MS,'320000');
   }
-  if(main.Name==='converter')assert.equal(env.CONVERTER_SHAPE_REGISTRY,'/app/body-staging/shape-bakes.json');
+  if(main.Name==='converter') {
+    assert.equal(env.CONVERTER_SHAPE_REGISTRY,'/app/body-staging/shape-bakes.json');
+    assert.equal(env.CONVERTER_SKIN_ENABLED,'true');assert.equal(env.CONVERTER_OUTLINE_ENABLED,'true');
+    assert.equal(env.CONVERTER_SKIN_ASSET_ROOT,'/app/body-staging/skin');
+  }
+  if(main.Name==='bff'||main.Name==='analysis-worker') {
+    assert.equal(env.SKIN_EXPORT_ENABLED,'true');assert.equal(env.OUTLINE_EXPORT_ENABLED,'true');
+  }
   if(main.Name==='inference') {
     assert.equal(env.ROUTING_FULLBODY_ENABLED,'1');assert.equal(env.ROUTING_PREPARE_ASSETS,'1');
     assert.equal(env.POSE_MODEL_VARIANT,'humanart-m');
