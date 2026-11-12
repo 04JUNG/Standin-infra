@@ -10,6 +10,53 @@ import tempfile
 ALLOWED_PATH = re.compile(r'(?:skin/[a-z0-9-]+\.(?:png|json|json\.gz)|shape-bakes\.json|sources/[a-z0-9-]+\.(?:blend|py)|runtime/[a-z0-9-]+\.ssr|body-catalog\.json|body-models\.json|characters\.json|(?:fbx/[a-z0-9-]+\.fbx)|(?:png/[a-z0-9-]+\.png)|(?:qa/[a-z0-9-]+\.json)|(?:preview/posed-mesh-v1/[a-f0-9]{64}\.(?:json|glb)))\Z')
 ROLES = {'inference', 'converter', 'bff'}
 LIMIT = 300 * 1024 * 1024
+RELEASE_CAP = 768 * 1024 * 1024
+PREPARED_CAP = 192 * 1024 * 1024
+PREPARED_PROFILE = 'prepared-neutral-20.v1'
+PREPARED_PATH = re.compile(r'(fbx|qa)/prepared-([a-f0-9]{64})\.(fbx|json)\Z')
+
+
+def check_budget(files, profile=None, role='converter'):
+    """A finite Converter-only allowance; ordinary assets keep their old cap."""
+    if profile is None:
+        if sum(f['size'] for f in files) > RELEASE_CAP:
+            raise ValueError('body release size exceeded')
+        return RELEASE_CAP
+    if profile != PREPARED_PROFILE or role != 'converter':
+        raise ValueError('invalid prepared budget profile')
+    base, prepared, pairs = 0, 0, {}
+    for f in files:
+        match = PREPARED_PATH.fullmatch(f['path'])
+        if not match:
+            base += f['size']
+            continue
+        folder, key, extension = match.groups()
+        if (f['roles'] != ['converter'] or (folder, extension) not in (('fbx', 'fbx'), ('qa', 'json'))
+                or f['size'] > (64 * 1024 * 1024 if folder == 'fbx' else 256 * 1024)):
+            raise ValueError('invalid prepared budget file')
+        pairs.setdefault(key, set()).add(folder)
+        prepared += f['size']
+    # 20 current bodies plus up to two preserved previous default prototypes.
+    if not pairs or len(pairs) > 22 or any(v != {'fbx', 'qa'} for v in pairs.values()):
+        raise ValueError('invalid prepared budget pairs')
+    if base > RELEASE_CAP or prepared > PREPARED_CAP:
+        raise ValueError('body release size exceeded')
+    return RELEASE_CAP + PREPARED_CAP
+
+
+def validate_files(files):
+    if not isinstance(files, list) or not files or len(files) > 10000:
+        raise ValueError('invalid body file list')
+    seen = set()
+    for f in files:
+        path, size, digest, roles = f.get('path'), f.get('size'), f.get('sha256'), f.get('roles')
+        if not isinstance(path, str) or not ALLOWED_PATH.fullmatch(path) or path in seen:
+            raise ValueError('invalid or duplicate body asset path')
+        if type(size) is not int or not 0 < size <= LIMIT or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest):
+            raise ValueError('invalid body asset identity')
+        if not isinstance(roles, list) or not roles or any(r not in ROLES for r in roles) or len(set(roles)) != len(roles):
+            raise ValueError('invalid body asset roles')
+        seen.add(path)
 
 def install(fetch, env=os.environ):
     role = env['BODY_ASSETS_ROLE']
@@ -26,21 +73,8 @@ def install(fetch, env=os.environ):
     if manifest.get('schema') != 'body-assets.v1' or not isinstance(manifest.get('version'), str) or not manifest['version']:
         raise ValueError('invalid body manifest schema')
     files = manifest.get('files')
-    if not isinstance(files, list) or not files or len(files) > 10000:
-        raise ValueError('invalid body file list')
-    seen, total = set(), 0
-    for f in files:
-        path, size, digest, roles = f.get('path'), f.get('size'), f.get('sha256'), f.get('roles')
-        if not isinstance(path, str) or not ALLOWED_PATH.fullmatch(path) or path in seen:
-            raise ValueError('invalid or duplicate body asset path')
-        if type(size) is not int or not 0 < size <= LIMIT or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest):
-            raise ValueError('invalid body asset identity')
-        if not isinstance(roles, list) or not roles or any(r not in ROLES for r in roles) or len(set(roles)) != len(roles):
-            raise ValueError('invalid body asset roles')
-        seen.add(path)
-        total += size
-    if total > 768 * 1024 * 1024:
-        raise ValueError('body release size exceeded')
+    validate_files(files)
+    check_budget(files, manifest.get('budgetProfile'), role)
     selected = [f for f in files if role in f['roles']]
     required = {'inference': 'body-catalog.json', 'converter': 'characters.json', 'bff': 'body-models.json'}[role]
     if required not in {f['path'] for f in selected}:
@@ -66,6 +100,8 @@ def install(fetch, env=os.environ):
         print(json.dumps(receipt), flush=True)
         return receipt
     finally:
+        if stage.resolve().parent != root.resolve():
+            raise ValueError('temporary asset path escaped the install root')
         shutil.rmtree(stage)
 
 if __name__ == '__main__':
