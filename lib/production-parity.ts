@@ -40,7 +40,17 @@ export function configureProductionParity(task: ecs.FargateTaskDefinition, asset
     main.addContainerDependencies({container:init,condition:ecs.ContainerDependencyCondition.SUCCESS});
     main.addEnvironment("CONVERTER_INTERACTIVE_ENABLED","true");
   } else {
+    const access = profile.accessPolicy;
+    if (access?.enabled !== true || access.supporterEnabled !== true ||
+        !Number.isFinite(Date.parse(access.openBetaEndedAt)) ||
+        !Array.isArray(access.operatorInstallationIds) ||
+        access.operatorInstallationIds.length !== 3 ||
+        new Set(access.operatorInstallationIds).size !== 3 ||
+        !access.operatorInstallationIds.every((id: unknown) => typeof id === "string" && /^inst_[a-f0-9-]{36}$/.test(id)))
+      throw new Error("production requires the explicit three-operator access policy");
     add({CONVERTER_CHARACTER_ID:"male-base-v0-8-0",BODY_RECOMMENDATION_ENABLED:"false",
+      ACCESS_GATE_ENABLED:"true", SUPPORTER_ACCESS_ENABLED:"true",
+      ACCESS_OPERATOR_INSTALLATIONS:access.operatorInstallationIds.join(","), OPEN_BETA_ENDED_AT:access.openBetaEndedAt,
       REPLAY_ENABLED:"true",CAPTURE_REPLAY_ENABLED:"true",CSP_RESULT_CAPTURE_ENABLED:"true",
       REPLAY_ENVIRONMENT:"production",REPLAY_CONSENT_MODE:"explicit",REPLAY_BUCKET:replay.bucketName});
     replay.grantReadWrite(task.taskRole,"replays/*");
