@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 const [mode,file]=process.argv.slice(2);
 assert.ok(['on','off'].includes(mode));
 const template=JSON.parse(readFileSync(file,'utf8'));
+const isStaging=file.endsWith('StandinStagingApp.template.json');
 const tasks=Object.values(template.Resources).filter(r=>r.Type==='AWS::ECS::TaskDefinition');
 const mains=['bff','inference','converter','analysis-worker'];
 let checked=0;
@@ -32,11 +33,13 @@ for(const task of tasks) {
   }
   if(main.Name==='converter') {
     assert.equal(env.CONVERTER_SHAPE_REGISTRY,'/app/body-staging/shape-bakes.json');
-    assert.equal(env.CONVERTER_SKIN_ENABLED,'true');assert.equal(env.CONVERTER_OUTLINE_ENABLED,'true');
-    assert.equal(env.CONVERTER_SKIN_ASSET_ROOT,'/app/body-staging/skin');
+    assert.equal(env.CONVERTER_SKIN_ENABLED,isStaging?'true':undefined);
+    assert.equal(env.CONVERTER_OUTLINE_ENABLED,isStaging?'true':undefined);
+    assert.equal(env.CONVERTER_SKIN_ASSET_ROOT,isStaging?'/app/body-staging/skin':undefined);
   }
   if(main.Name==='bff'||main.Name==='analysis-worker') {
-    assert.equal(env.SKIN_EXPORT_ENABLED,'true');assert.equal(env.OUTLINE_EXPORT_ENABLED,'true');
+    assert.equal(env.SKIN_EXPORT_ENABLED,isStaging?'true':undefined);
+    assert.equal(env.OUTLINE_EXPORT_ENABLED,isStaging?'true':undefined);
   }
   if(main.Name==='inference') {
     assert.equal(env.ROUTING_FULLBODY_ENABLED,'1');assert.equal(env.ROUTING_PREPARE_ASSETS,'1');
