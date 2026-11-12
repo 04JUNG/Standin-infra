@@ -544,8 +544,10 @@ export class AppStack extends Stack {
     // 6 GB는 후보 라이브러리 피크 대비 ~3 GB 여유다(4 GB면 피크에서 ~72%). 동시 분석이 몰리면
     // 더 쓰므로 여유를 크게 잡았다. OOM은 디스코드 TASK_OOM으로 온다.
     const inferenceTask = new ecs.FargateTaskDefinition(this, "InferenceTask", {
-      cpu: 1024,
-      memoryLimitMiB: 6144,
+      // Preserve the healthy production service capacity across infrastructure
+      // rollouts; Recall initialization must not inherit the old CDK default.
+      cpu: isPrimary ? 4096 : 1024,
+      memoryLimitMiB: isPrimary ? 8192 : 6144,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,

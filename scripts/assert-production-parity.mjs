@@ -11,6 +11,9 @@ const body=JSON.parse(readFileSync('config/production-body-assets.json','utf8'))
 const stage=JSON.parse(readFileSync('config/staging-body-assets.json','utf8'));
 assert.deepEqual(body,stage,'approved body bytes/pins match develop');
 const inference=env(get('inference'));
+const inferenceTask=tasks.find(t=>t.Properties.ContainerDefinitions.some(c=>c.Name==='inference'));
+assert.equal(inferenceTask.Properties.Cpu,'4096','preserve deployed production CPU');
+assert.equal(inferenceTask.Properties.Memory,'8192','preserve deployed production memory');
 assert.equal(inference.BODY_MATCHING_MODE,'off');
 // Match the reviewed main prepare_fullbody_deployment.py contract. A partial
 // rollout cannot start Human-Art even when its model bundle is installed.
