@@ -15,6 +15,8 @@ export interface BodyAssetsRelease extends BodyAssetsManifest {
   defaultCharacterId?: string;
   bodyEnvironment: Record<string, string>;
   shapeBakeEnabled?: boolean;
+  /** Exact staging appearance release; unset for production. */
+  appearanceEnabled?: boolean;
   initImages?: Partial<Record<'inference' | 'converter', string>>;
 }
 
@@ -43,6 +45,13 @@ export function configureBodyAssets(
       ? { BODY_CATALOG_PATH: `${root}/body-models.json`, BODY_SELECTION_ENABLED: 'true', BODY_RECOMMENDATION_ENABLED: 'false', BODY_UX_ENABLED: 'true', ...(release.defaultCharacterId ? { CONVERTER_CHARACTER_ID: release.defaultCharacterId } : {}), ...(release.shapeBakeEnabled ? { BODY_SHAPE_EDIT_ENABLED: 'true', BODY_SHAPE_BAKE_ENABLED: 'true', CONVERTER_SHAPE_TIMEOUT_MS: '320000' } : {}) }
       : { CONVERTER_CHARACTER_REGISTRY: `${root}/characters.json`, POSE_PREVIEW_URI: `${root}/preview`, ...(release.shapeBakeEnabled ? { CONVERTER_SHAPE_REGISTRY: `${root}/shape-bakes.json`, CONVERTER_SHAPE_TIMEOUT_SECONDS: '300' } : {}), ...release.bodyEnvironment };
   for (const [name, value] of Object.entries(environment)) main.addEnvironment(name, value);
+  if (release.appearanceEnabled) {
+    if (!Stack.of(task).stackName.startsWith('StandinStagingApp')) throw new Error('appearance rollout is staging-only');
+    const values = role === 'converter'
+      ? { CONVERTER_SKIN_ENABLED: 'true', CONVERTER_OUTLINE_ENABLED: 'true', CONVERTER_SKIN_ASSET_ROOT: `${root}/skin` }
+      : role === 'bff' ? { SKIN_EXPORT_ENABLED: 'true', OUTLINE_EXPORT_ENABLED: 'true' } : {};
+    for (const [name, value] of Object.entries(values)) main.addEnvironment(name, value);
+  }
   task.addVolume({ name: 'body-assets' });
   main.addMountPoints({ sourceVolume: 'body-assets', containerPath: root, readOnly: true });
   const source = readFileSync(path.join(__dirname, '..', 'scripts', role === 'bff' ? 'body-assets-init.mjs' : 'body-assets-init.py'), 'utf8');

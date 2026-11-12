@@ -4,8 +4,8 @@
   "manifestSha256": "9acb2ee7ec2444706107b5d1c5b264866dc35bdfc8918a31cbec997d12fc9d72",
   "manifests": {
     "converter": {
-      "manifestKey": "body-models/releases/anatomy-presets-20261111-f590cdb9f4ed-converter/manifest.json",
-      "manifestSha256": "f590cdb9f4ed0a78fb331bdde90c715c526c1314ce03d046432ac8eeaf3bf973"
+      "manifestKey": "body-models/releases/anatomy-composed-skins-20261112-8149c1568539-converter/manifest.json",
+      "manifestSha256": "8149c15685398ba279550a9887fa8d05b5208e26b60264e6fa55a6cc20a09771"
     },
     "bff": {
       "manifestKey": "body-models/releases/anatomy-20261111-5ab242a0112a-bff/presets-0897cb6c18fd/manifest.json",
@@ -92,5 +92,6 @@
   "initImages": {
     "converter": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/converter@sha256:39c8986a5efacc46f924ca56d9f9ecdd5026fa17bcd9de55590669d896820939",
     "inference": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/inference@sha256:60dc4a1374667517d294b143971d7b24506e41f9ad249ad077a2b11a0a20e35b"
-  }
+  },
+  "appearanceEnabled": true
 }

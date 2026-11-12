@@ -12,7 +12,10 @@ const env=c=>Object.fromEntries(c.Environment.map(e=>[e.Name,e.Value]));
 const profile=JSON.parse(readFileSync('config/production-runtime-parity.json','utf8'));
 const body=JSON.parse(readFileSync('config/production-body-assets.json','utf8'));
 const stage=JSON.parse(readFileSync('config/staging-body-assets.json','utf8'));
-assert.deepEqual(body,stage,'approved body bytes/pins match develop');
+// New staging appearance assets are opt-in; main must retain its approved production pins.
+assert.deepEqual(body.manifests,profile.bodyManifests,'production pins match the frozen approved runtime profile');
+assert.equal(body.defaultCharacterId,stage.defaultCharacterId,'same default model identity');
+assert.equal(body.appearanceEnabled,undefined,'appearance activation requires a separate production rollout');
 const inference=env(get('inference'));
 const inferenceTask=tasks.find(t=>t.Properties.ContainerDefinitions.some(c=>c.Name==='inference'));
 assert.equal(inferenceTask.Properties.Cpu,'4096','preserve deployed production CPU');
@@ -26,6 +29,7 @@ for (const [name,value] of Object.entries({ROUTING_FULLBODY_ENABLED:'1',
   assert.equal(inference[name],value,`complete fullbody startup: ${name}`);
 assert.equal(inference.SEMANTIC_REVIEWED_PROPS_FIRST,'1');
 assert.equal(inference.HAND_SKIN_SCREEN_CONCURRENCY,'2');
+assert.equal(inference.HAND_SKIN_SCREEN_ON_SELECTION,'0','hand quality screening is outside the selected pose/body validation policy');
 assert.ok(JSON.stringify(inference.POSE_LIBRARY_URI).includes(profile.poseLibraryKey));
 assert.ok(JSON.stringify(inference.POSE_THUMBNAIL_OVERLAY_URI).includes(profile.thumbnailKey));
 assert.equal(inference.POSE_THUMBNAIL_OVERLAY_SHA256,profile.thumbnailSha256);
