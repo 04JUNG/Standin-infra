@@ -4,7 +4,7 @@
 
 ## 승격 결과
 
-현재 main 기반 release 브랜치에 develop의 제품 코드를 모두 포함한다. 이전 squash 이력에서 중복된 merge 충돌을 정리하고 main 전용 마케팅/유입 연결, macOS bar 복원, 기존 0.2.9 release notes를 보존하고 새 설치 파일 발행이 가능한 0.2.10을 준비했다. develop에 있는 파일 삭제는 없고, 추론의 pipeline/search/features/refine/converter 실행 코드가 develop과 같음을 확인했다.
+현재 main 기반 release 브랜치에 develop의 제품 코드를 모두 포함한다. 이전 squash 이력에서 중복된 merge 충돌을 정리하고 main 전용 마케팅/유입 연결, macOS bar 복원, 기존 0.2.9 release notes를 보존하고 새 설치 파일 발행이 가능한 2.10.0을 준비했다. develop에 있는 파일 삭제는 없고, 추론의 pipeline/search/features/refine/converter 실행 코드가 develop과 같음을 확인했다.
 
 코드뿐 아니라 production 설정도 승인된 develop 제품 수준으로 맞춘다.
 
@@ -21,7 +21,7 @@
 
 - inference 전체: 3,598 passed, 11 skipped. production/staging/Recall/Converter 배포 계약 69 passed. frozen RC4 unittest 59 passed(원본 runtime hash 보존).
 - BFF: Node 22 전체 1,121 passed, 2 skipped + production 설정 검사 6 passed. 실제 일회용 PostgreSQL 16의 acquisition 동시성/동의/철회 검사 통과. 마케팅 탭 DOM과 develop 탭 공존 검사 통과.
-- client: 최종 0.2.10 Node 22 전체 1,576 passed, 5 skipped, typecheck/build/release:check 및 lint(error 0) 통과. production interactive flag를 켠 실제 Vite 빌드도 통과했다. 기존 Windows/macOS Rust PR 검사가 모두 통과했다.
+- client: 최종 2.10.0 Node 22 전체 1,576 passed, 5 skipped, typecheck/build/release:check 및 lint(error 0) 통과. production interactive flag를 켠 실제 Vite 빌드도 통과했다. 기존 Windows/macOS Rust PR 검사가 모두 통과했다.
 - infra: typecheck/build, prod/staging/off/canary synth, 역할별 body pin·환경 격리·서비스 인증·동의/저장·private Converter·refine 정책·자산 보호 검사를 실행한다. PR CI에서 동일 검사를 다시 수행한다.
 
 ## 실제 승격 순서
@@ -36,3 +36,8 @@ PR 생성/갱신은 운영 배포와 다르다. 검사 시점 운영 inference v
 ## 전체 저장소 범위
 
 server/BFF/client/infra 4개 승격 PR. 랜딩 develop 트리는 과거 main `cb2a74b`에 이미 포함되어 새 승격 내용이 없으며, `Standin-master-docs`, `demo-repository`에는 develop이 없다.
+
+## 최신 develop 통합·충돌 해소
+
+최신 develop `6dfdd6bb03f2cf562007695f25d57b18e74eae4c`를 통합했다. 이전 승격 스냅샷 이후 변경을 3-way 적용하여 운영 전용 설정을 보존하고, develop을 merge parent로 기록했다. 신규 최종 FBX 캐시·직접 3D 미리보기·중립 프리셋 준비 코드를 포함한다. 캐시는 기존 develop 전용 opt-in 정책을 유지하고, 준비 체형은 별도 Linux 번들이 필요하다.
+main 병합·운영 배포·릴리스 게시는 진행하지 않았다.
