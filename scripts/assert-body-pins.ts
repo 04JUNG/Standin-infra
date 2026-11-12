@@ -46,10 +46,10 @@ for (const role of ['converter', 'bff', 'inference'] as const) {
   assert.equal(promoted.pin.BODY_ASSETS_MANIFEST_SHA256, productionPin.manifestSha256);
   if (role === 'bff') {
     assert.equal(promoted.main.CONVERTER_CHARACTER_ID, 'male-base-v0-8-0');
-    assert.equal(promoted.main.SKIN_EXPORT_ENABLED, undefined);
-    assert.equal(promoted.main.OUTLINE_EXPORT_ENABLED, undefined);
+    assert.equal(promoted.main.SKIN_EXPORT_ENABLED, 'true');
+    assert.equal(promoted.main.OUTLINE_EXPORT_ENABLED, 'true');
   }
-  if (role === 'converter') assert.equal(promoted.main.CONVERTER_SKIN_ENABLED, undefined);
+  if (role === 'converter') assert.equal(promoted.main.CONVERTER_SKIN_ENABLED, 'true');
 }
 for (const manifestKey of ['body-models/releases/test/../escape/manifest.json', 'body-models/releases/test/presets-invalid/manifest.json']) {
   const invalid = structuredClone(staging);

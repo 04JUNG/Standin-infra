@@ -56,7 +56,7 @@
     "//fbxExportEnabled": "BFF의 FBX 노출 스위치. converterEnabled=true일 때만 true 허용. refine과 같은 두 단계다.",
     "fbxExportEnabled": true,
     "//converterImageTag": "converter는 빌드 파이프라인이 별개다(converter-deploy.yml, 현재 main 전용). 그래서 BFF·추론의 imageTag와 따로 둔다.",
-    "converterImageTag": "sha256:5b87c09b8a0710fb764dbce972ff23afda2e9793b125ed911fd99f7a6c4c7a9f",
+    "converterImageTag": "sha256:de012829c8bc42901271d20e5f50eb87c709c0d465a14cc4675a69326988465f",
     "//envName": "배포 대상 환경. 기본 prod. `-c envName=staging`이면 StandinStagingApp을 만든다.",
     "envName": "prod",
     "//quotaGlobalDaily": "프로덕션 전체 일일 상한. 앱의 QUOTA_GLOBAL_DAILY로 들어간다.",
@@ -95,7 +95,7 @@
     "handSelectionEnabled": true,
     "semanticSearchEnabled": true,
     "//productionBodyAssetsEnabled": "운영에도 동일한 SHA256의 체형·shape 자산을 설치한다. 자산은 운영 버킷에 먼저 복사해야 한다.",
-    "poseLibraryKey": "pose-library/releases/lib-20261110-da2ead1e-search-12eec403a8fc-71d764a6e5bf.tar.gz",
+    "poseLibraryKey": "pose-library/releases/lib-20261112-f5c4b224-standing-library-d856d042d0a0.tar.gz",
     "//poseLibraryKey": "Approved develop library promoted byte-for-byte into the production assets bucket."
   }
 }
