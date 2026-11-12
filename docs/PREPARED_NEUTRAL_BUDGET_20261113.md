@@ -28,3 +28,5 @@ Python 테스트는 기존 role/path/hash/pin 검사와 함께 새 예산의 경
 승인된 다음 배포에서는 서버 PR과 이 설치기 PR을 함께 사용하고, 최종 Converter 이미지의 코드/build/플랫폼과 prepared identity가 일치하는 번들을 새 immutable prefix로 발행해야 한다. manifest key/SHA·parity pin·인라인 initializer를 한 계획에서 검토한다. 이전 task definition/manifest pin을 보존해 rollback한다. 기존 큰 자산을 삭제할 필요가 없다.
 
 이번 작업은 별도 develop/main 기능 브랜치와 PR까지다. S3 쓰기·SSM·ECS·운영/스테이징 배포·병합·릴리스를 실행하지 않는다. 기존 pin은 그대로다.
+
+대응 서버 PR: [#236](https://github.com/04JUNG/Standin-server/pull/236). main 실제 사전 빌드 이미지 eca16e9d…(source f31558c30, Linux/amd64, uid10001)의 consumer 코드에서도20종 prepared를 확인했다. 기존196객체를 보존하는 Linux197→233 확장·전체 설치·손상 거부·기본2종 rollback을 실제 로컬 볼륨에서 검사했다. 실제 ECS/S3 다운로드·기동 시간은 미검증이며 기존120초 startTimeout/health startPeriod는 변경하지 않는다.
