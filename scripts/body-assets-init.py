@@ -13,6 +13,8 @@ LIMIT = 300 * 1024 * 1024
 RELEASE_CAP = 768 * 1024 * 1024
 PREPARED_CAP = 192 * 1024 * 1024
 PREPARED_PROFILE = 'prepared-neutral-20.v1'
+LOD_PROFILE = 'lod-defaults-20.v1'
+LOD_RELEASE_CAP = 1280 * 1024 * 1024
 PREPARED_PATH = re.compile(r'(fbx|qa)/prepared-([a-f0-9]{64})\.(fbx|json)\Z')
 
 
@@ -22,8 +24,12 @@ def check_budget(files, profile=None, role='converter'):
         if sum(f['size'] for f in files) > RELEASE_CAP:
             raise ValueError('body release size exceeded')
         return RELEASE_CAP
-    if profile != PREPARED_PROFILE or role != 'converter':
+    if profile not in (PREPARED_PROFILE, LOD_PROFILE) or role != 'converter':
         raise ValueError('invalid prepared budget profile')
+    # The LOD release preserves all historical models and adds two independently
+    # pinned sources, twenty FBXs and their topology-specific UV data. This does
+    # not change ordinary releases, individual file limits or prepared limits.
+    base_cap = LOD_RELEASE_CAP if profile == LOD_PROFILE else RELEASE_CAP
     base, prepared, pairs = 0, 0, {}
     for f in files:
         match = PREPARED_PATH.fullmatch(f['path'])
@@ -39,9 +45,9 @@ def check_budget(files, profile=None, role='converter'):
     # 20 current bodies plus up to two preserved previous default prototypes.
     if not pairs or len(pairs) > 22 or any(v != {'fbx', 'qa'} for v in pairs.values()):
         raise ValueError('invalid prepared budget pairs')
-    if base > RELEASE_CAP or prepared > PREPARED_CAP:
+    if base > base_cap or prepared > PREPARED_CAP:
         raise ValueError('body release size exceeded')
-    return RELEASE_CAP + PREPARED_CAP
+    return base_cap + PREPARED_CAP
 
 
 def validate_files(files):

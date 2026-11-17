@@ -28,3 +28,9 @@ Python 테스트는 기존 role/path/hash/pin 검사와 함께 새 예산의 경
 승인된 다음 배포에서는 서버 PR과 이 설치기 PR을 함께 사용하고, 최종 Converter 이미지의 코드/build/플랫폼과 prepared identity가 일치하는 번들을 새 immutable prefix로 발행해야 한다. manifest key/SHA·parity pin·인라인 initializer를 한 계획에서 검토한다. 이전 task definition/manifest pin을 보존해 rollback한다. 기존 큰 자산을 삭제할 필요가 없다.
 
 이번 작업은 별도 develop/main 기능 브랜치와 PR까지다. S3 쓰기·SSM·ECS·운영/스테이징 배포·병합·릴리스를 실행하지 않는다. 기존 pin은 그대로다.
+
+## LOD 기본 모델과 과거 자산을 함께 보존하는 예산
+
+`lod-defaults-20.v1`은 새 20종의 source·FBX·UV와 이전 자산을 함께 설치하기 위해 일반 자산에 1,280 MiB, prepared 파일에 기존 192 MiB를 허용한다. 전체 상한은 1,472 MiB다. 이 프로필도 Converter 전용이며, 파일당 300 MiB·prepared FBX 64 MiB·receipt 256 KiB·최대 22쌍·manifest 64 KiB·경로·역할·해시 검사는 유지한다. 일반 릴리스와 기존 prepared profile의 예산은 바꾸지 않는다.
+
+이 변경은 새 예산의 검사만 추가한다. 자산 pin, IAM, ECS 설정, 기본 ID와 운영 구성은 바꾸지 않는다. 실제 신규 릴리스의 최종 목록과 용량·Linux 설치·prepared 재로드 및 코드 리뷰가 완료된 뒤 별도 배포 변경을 검토한다.

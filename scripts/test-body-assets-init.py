@@ -103,6 +103,17 @@ class InstallerTests(unittest.TestCase):
                       [dict(fbx,size=64*1024*1024+1),qa], [dict(fbx,roles=['bff']),qa]]:
             with self.assertRaises(ValueError): module.check_budget(files,module.PREPARED_PROFILE)
 
+    def test_lod_profile_preserves_finite_base_prepared_and_role_limits(self):
+        files = [dict(path=f'fbx/base-{n}.fbx', size=256*1024*1024, roles=['converter']) for n in range(5)]
+        files += [dict(path='fbx/prepared-'+'a'*64+'.fbx', size=10, roles=['converter']),
+                  dict(path='qa/prepared-'+'a'*64+'.json', size=10, roles=['converter'])]
+        self.assertEqual(module.check_budget(files, module.LOD_PROFILE), 1472*1024*1024)
+        for role in ('bff', 'inference'):
+            with self.assertRaises(ValueError): module.check_budget(files, module.LOD_PROFILE, role)
+        with self.assertRaises(ValueError): module.check_budget(files, module.PREPARED_PROFILE)
+        files[0]['size'] += 1
+        with self.assertRaises(ValueError): module.check_budget(files, module.LOD_PROFILE)
+
     def test_prepared_corruption_leaves_old_install_and_rollback_restores_catalog(self):
         self.run_install('converter')
         old=(self.root/'converter/characters.json').read_bytes()
