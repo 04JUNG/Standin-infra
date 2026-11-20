@@ -90,7 +90,7 @@
     "BODY_TEEN_MALE_URI": "/app/body-staging/fbx/teen-male.fbx"
   },
   "initImages": {
-    "converter": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/converter@sha256:39c8986a5efacc46f924ca56d9f9ecdd5026fa17bcd9de55590669d896820939",
+    "converter": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/converter@sha256:a4d731fe35682f3e97f2bbeb53e188c3f43fd2bdc3f6da6a89cedb41ab2c5fd6",
     "inference": "136889124221.dkr.ecr.ap-northeast-2.amazonaws.com/standin/inference@sha256:60dc4a1374667517d294b143971d7b24506e41f9ad249ad077a2b11a0a20e35b"
   },
   "appearanceEnabled": true

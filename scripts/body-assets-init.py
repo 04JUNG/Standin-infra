@@ -64,6 +64,61 @@ def validate_files(files):
             raise ValueError('invalid body asset roles')
         seen.add(path)
 
+
+def verify_prepared(stage, files):
+    """Verify prototypes with the real Converter reader before publishing any file.
+
+    Registry paths name the deployment mount. Only manifest-selected, staged
+    files may be read here; filenames and hashes remain part of the identity.
+    """
+    paths = {f['path']: f for f in files}
+    prepared = {p for p in paths if PREPARED_PATH.fullmatch(p)}
+    if not prepared:
+        return 0
+    if 'shape-bakes.json' not in paths or 'characters.json' not in paths:
+        raise ValueError('prepared registry missing')
+    registry = json.loads((stage / 'shape-bakes.json').read_bytes())
+    characters = json.loads((stage / 'characters.json').read_bytes())['characters']
+    index = registry.get('prepared_neutrals', {})
+    entries = index.get('entries')
+    if index.get('schema') != 'prepared-neutral-index.v1' or not isinstance(entries, dict) or not entries:
+        raise ValueError('invalid prepared index')
+    try:
+        from converter.prepared_body import read_prepared, preset_values
+    except ImportError as error:
+        raise ValueError('prepared identity verifier unavailable') from error
+    used = set()
+    for cid, entry in entries.items():
+        if not isinstance(entry, dict) or set(entry) != {'path', 'sha256'}:
+            raise ValueError('invalid prepared entry')
+        recorded = Path(entry['path'])
+        receipt_path = 'qa/' + recorded.name
+        if (not recorded.is_absolute() or recorded.parent.name != 'qa'
+                or receipt_path not in prepared or paths[receipt_path]['sha256'] != entry['sha256']):
+            raise ValueError('prepared receipt escaped manifest')
+        match = PREPARED_PATH.fullmatch(receipt_path)
+        fbx_path = 'fbx/prepared-' + match.group(2) + '.fbx'
+        if fbx_path not in prepared:
+            raise ValueError('prepared FBX missing')
+        raw = registry['characters'][cid]
+        if characters[cid]['sha256'] != raw['asset_sha256']:
+            raise ValueError('prepared character identity mismatch')
+        source = dict(registry['sources'][raw['rules']])
+        for name in ('blend', 'controller'):
+            original = Path(source[name])
+            local = 'sources/' + original.name
+            if (not original.is_absolute() or original.parent.name != 'sources'
+                    or local not in paths or paths[local]['sha256'] != source[name + '_sha256']):
+                raise ValueError('prepared source escaped manifest')
+            source[name] = str(stage / local)
+        recipe = {**raw, **source, 'values': preset_values(raw)}
+        read_prepared(recipe, {**entry, 'path': str(stage / receipt_path)})
+        used.update((receipt_path, fbx_path))
+    if used != prepared:
+        raise ValueError('unindexed prepared file')
+    return len(entries)
+
+
 def install(fetch, env=os.environ):
     role = env['BODY_ASSETS_ROLE']
     if role not in ROLES:
@@ -97,11 +152,14 @@ def install(fetch, env=os.environ):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             target.chmod(0o644)
+        prepared_count = verify_prepared(stage, selected) if role == 'converter' else 0
         for f in selected:
             target = root / f['path']
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(stage / f['path'], target)
         receipt = dict(event='body_assets_ready', role=role, version=manifest['version'], manifestSha256=expected, files=len(selected))
+        if prepared_count:
+            receipt['preparedIdentitiesVerified'] = prepared_count
         (root / '.body-assets-ready.json').write_text(json.dumps(receipt) + '\n')
         print(json.dumps(receipt), flush=True)
         return receipt
