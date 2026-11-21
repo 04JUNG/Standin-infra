@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "standin.newbody-validation-progress.v2",
+  "observedUtc": "2026-11-21T19:52:08.734231+00:00",
+  "technicalGatesPassed": false,
+  "releaseApproved": false,
+  "productionChanged": false,
+  "catalogSha256": "6e35fd3b12b345915e6e2430644a22bbe9ca6349e1948ac89122f44a6aa7aa29",
+  "independentRuntimeChecksPassed": true,
+  "prepared": {
+    "completed": 20,
+    "required": 20
+  },
+  "converterFinalFiles": 12,
+  "directAppearanceCombinations": 480,
+  "bffDeliveredCombinations": 480,
+  "functionalNativeFileObservations": 26,
+  "functionalNativeUniqueArtifacts": 25,
+  "functionalCspUniqueArtifacts": 25,
+  "apiPerformance": {
+    "completed": 36,
+    "required": 36,
+    "oldNewPairs": 18,
+    "repeatsPerCondition": 1,
+    "complete": true
+  },
+  "nativePerformance": {
+    "completed": 16,
+    "required": 36,
+    "repeatsPerCondition": 3,
+    "complete": false
+  },
+  "roleInstallers": {
+    "converter": 281,
+    "inference": 70,
+    "bff": 84
+  },
+  "mainPullRequestsCreated": false,
+  "remaining": [
+    "20 actual native app benchmark saves",
+    "Final repeated comparison/provenance docs",
+    "Four selective main Draft PRs, remote CI and external review state"
+  ],
+  "scope": "Real native UI and CSP observations are separate from automated BFF combinations; API single observations are separate from actual native repeated statistics",
+  "canonicalEvidence": "https://github.com/04JUNG/Standin-server/blob/codex/newbody-default-staging-20261118/docs/newbody-v5p2-20261121/"
+}
