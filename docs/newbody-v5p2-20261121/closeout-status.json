@@ -1,399 +1,45 @@
 {
-  "observedUtc": "2026-11-21T08:11:07.074894+00:00",
-  "scope": "Owned isolated localhost services and native QA app; not AWS staging or production deployment",
+  "schemaVersion": "standin.newbody-validation-progress.v2",
+  "observedUtc": "2026-11-21T19:52:08.734231+00:00",
+  "technicalGatesPassed": false,
+  "releaseApproved": false,
+  "productionChanged": false,
+  "catalogSha256": "6e35fd3b12b345915e6e2430644a22bbe9ca6349e1948ac89122f44a6aa7aa29",
+  "independentRuntimeChecksPassed": true,
   "prepared": {
     "completed": 20,
-    "required": 20,
-    "proof": {
-      "path": "prepared-v5p2-flat/independent-audit.json",
-      "sha256": "1ee973d593f3c9cddf3c8c27a83b3bd63faf025a42dd9e1619813d4b17bb3e61"
-    }
+    "required": 20
   },
-  "converterFinal": {
-    "completed": 12,
-    "proof": {
-      "path": "converter-final-v5p2-v4/results.json",
-      "sha256": "08bc914ce6e2b1f3d5b242178d7821778f42ccb30fe3cb5a2b16fef220a6cf54"
-    }
+  "converterFinalFiles": 12,
+  "directAppearanceCombinations": 480,
+  "bffDeliveredCombinations": 480,
+  "functionalNativeFileObservations": 26,
+  "functionalNativeUniqueArtifacts": 25,
+  "functionalCspUniqueArtifacts": 25,
+  "apiPerformance": {
+    "completed": 36,
+    "required": 36,
+    "oldNewPairs": 18,
+    "repeatsPerCondition": 1,
+    "complete": true
   },
-  "directAppearance": {
-    "completed": 480,
-    "required": 480,
-    "nativeUiObserved": false,
-    "proof": {
-      "path": "appearance-matrix/results.json",
-      "sha256": "c0cc873164166a24e7604ade85566365b8d8bbb3b3485e538c9fd97921122f65"
-    }
+  "nativePerformance": {
+    "completed": 16,
+    "required": 36,
+    "repeatsPerCondition": 3,
+    "complete": false
   },
-  "directCsp": {
-    "completed": 22,
-    "nativeAppDownloaded": false,
-    "proof": {
-      "path": "evidence/csp-observations.json",
-      "sha256": "e6aaf691f2fc9d38e439425979c06990c155f307c3150fc0e92f9d79cce65b38"
-    }
+  "roleInstallers": {
+    "converter": 281,
+    "inference": 70,
+    "bff": 84
   },
-  "bffDefaults": {
-    "completed": 20,
-    "required": 20,
-    "nativeUiObserved": false,
-    "proof": {
-      "path": "evidence/bff-defaults-post-download-reload.json",
-      "sha256": "7ff618e4d01182c396d424562a102e737272cede3f80ef6f369e8ff4a166aa2b"
-    }
-  },
-  "bffMatrix": {
-    "completed": 353,
-    "required": 480,
-    "aggregatePassed": false
-  },
-  "nativeApp": {
-    "completed": 10,
-    "uniqueArtifacts": 9,
-    "cases": [
-      {
-        "case": "female-base-default",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-default/native-observation.json",
-          "sha256": "484150eb58f9c53aacb39a641c0b328cee482004210ee8cf5a72f07ad873fadf"
-        },
-        "artifactSha256": "e7a5098a902baa901e1fe581b66535beebebfb21ceba7a1ce5eccfec307884db",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-flesh",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-flesh/native-observation.json",
-          "sha256": "53355c55044f87ecfdf75b3bdee3da3df12bae72989ee46948cf9fa725dc8f28"
-        },
-        "artifactSha256": "ac63e15a82defc35db9165c2160534d4fb7fae14069b1e0b7446d037c03cd78b",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-flesh-guide",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-flesh-guide/native-observation.json",
-          "sha256": "7cd90bde0df642a4093df85a33b16ca5d12b552cb24f6941293efc0afc0f6c0a"
-        },
-        "artifactSha256": "da9a73bb341695b02363876671ddf621224f85adcc38604ca0c7e900ead1b0ff",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-flesh-guide-cache-fixed",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-flesh-guide-cache-fixed/native-observation.json",
-          "sha256": "bb15adc94dc63092a47633eced9d2ba64ffbff441d4cc6b4a4ce8ae36f94e69f"
-        },
-        "artifactSha256": "da9a73bb341695b02363876671ddf621224f85adcc38604ca0c7e900ead1b0ff",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": false,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-flesh-guide-outline-2",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-flesh-guide-outline-2/native-observation.json",
-          "sha256": "9a85a71e6a5dfeb8bcec8ef403c1a772c99de2f4c421bc3be88388cef1822e71"
-        },
-        "artifactSha256": "d04ae4ba184b84765a4899b21d30b254243e9a05adcbac4694772bbaa26168e1",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-flesh-muscle",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-flesh-muscle/native-observation.json",
-          "sha256": "079a76c2c0da571420a206cabb89c47d7fa338c40f38f9d49df75b63e27b0560"
-        },
-        "artifactSha256": "88c323baa918ed551b853cc73ae6ef5294e938cb0790aaefb3331d048bcbf3eb",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-flesh-outline-0.5",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-flesh-outline-0.5/native-observation.json",
-          "sha256": "40137fd6973888ea4fd4be6f53f30c51143bb269885b84cc92b322342012dd51"
-        },
-        "artifactSha256": "dc4b7abafebbb3151a7ed66df10ebc758cfe2ec5defdb3c9bb5aaa41ac33024d",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-gray-guide",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-gray-guide/native-observation.json",
-          "sha256": "bf852da41d85e620de1a17ca3caa7ec71961910a723d1fb42760f337dc5ff4c9"
-        },
-        "artifactSha256": "6bf291bd1af156a4637e6ecd85930173c46e74f3b928713e5f2a1b89e3f050a7",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "female-base-muscle",
-        "observation": {
-          "path": "evidence/native-downloads/female-base-muscle/native-observation.json",
-          "sha256": "84f43d81cbd4a0d6a2c152fbc5ab256ce6474505533620d47d9d1e5eb630b957"
-        },
-        "artifactSha256": "1d1fa68dc409a32fbb973926cd52dfe58caa52271bfdcbad548fe91b238fe8ff",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      },
-      {
-        "case": "male-base-default",
-        "observation": {
-          "path": "evidence/native-downloads/male-base-default/native-observation.json",
-          "sha256": "38cc1d370a5382d9bdc3ea7d613e7467f9e7e7a2c042db7f76a3aa2b7de14369"
-        },
-        "artifactSha256": "8faf5543a9cacebb1a554351637efa9a005053961d5da668a8135c0681aa43fb",
-        "actualNativeUiSaved": true,
-        "independentDiskReloaded": true,
-        "cspClipObserved": true,
-        "saveSummaryRegressionRetestRequired": false
-      }
-    ],
-    "representativeCoverageComplete": false
-  },
-  "ssr": {
-    "maleDevelopmentPassed": true,
-    "femaleDevelopmentPassed": true,
-    "finalFrozenWholeCatalogApproved": false,
-    "frozenCandidateChecks": {
-      "observedUtc": "2026-11-21T08:02:10.932501+00:00",
-      "catalogSha256": "210e9feeeffbbab84d44bdd4c34394c600c88c09e8ea4bd8114bd1b19bd9bec4",
-      "femaleRuntimeSha256": "a6f3f9ec816402f097fa35597474826d49a7c638b703980d3e8ce0be10bf73bf",
-      "femaleSelectionMode": "idw2-varying",
-      "noActivation": true,
-      "passed": false,
-      "reports": [
-        {
-          "sex": "female",
-          "seed": 99,
-          "path": "/private/tmp/standin-v5p2-closeout-20261121/frozen-runtime-v6/female-independent-99.json",
-          "passed": false
-        },
-        {
-          "sex": "female",
-          "seed": 873421,
-          "path": "/private/tmp/standin-v5p2-closeout-20261121/frozen-runtime-v6/female-independent-873421.json",
-          "passed": false
-        },
-        {
-          "sex": "male",
-          "seed": 99,
-          "path": "/private/tmp/standin-v5p2-closeout-20261121/frozen-runtime-v6/male-independent-99.json",
-          "passed": true
-        },
-        {
-          "sex": "male",
-          "seed": 873421,
-          "path": "/private/tmp/standin-v5p2-closeout-20261121/frozen-runtime-v6/male-independent-873421.json",
-          "passed": true
-        }
-      ]
-    },
-    "activeFemaleCandidate": "refined-v6-targeted; failed fresh independent checks, unapproved",
-    "limits_mm": {
-      "preset": 0.5,
-      "few": 5,
-      "basic": 10,
-      "all": 20
-    },
-    "sizeLimitBytes": 33554432,
-    "exactCandidateResults": [
-      {
-        "file": "female-independent-873421.json",
-        "passed": false,
-        "runtimeSha256": "a6f3f9ec816402f097fa35597474826d49a7c638b703980d3e8ce0be10bf73bf",
-        "catalogSha256": "210e9feeeffbbab84d44bdd4c34394c600c88c09e8ea4bd8114bd1b19bd9bec4",
-        "seed": 873421,
-        "size": {
-          "bytes": 33444528,
-          "limitBytes": 33554432
-        },
-        "maxima_mm": {
-          "preset": 0.017699237807769563,
-          "few": 5.966923183827545,
-          "basic": 11.527117096293308,
-          "all": 5.887135056876453
-        },
-        "geometry": {
-          "vertexCount": 50000,
-          "faceCount": 99996,
-          "indicesMatchFinalSource": true,
-          "facesSha256": "4e265dfcca4c1facca53d12b8b15789b2f774f7b981cec1c3faacf17851b6486"
-        }
-      },
-      {
-        "file": "female-independent-99.json",
-        "passed": false,
-        "runtimeSha256": "a6f3f9ec816402f097fa35597474826d49a7c638b703980d3e8ce0be10bf73bf",
-        "catalogSha256": "210e9feeeffbbab84d44bdd4c34394c600c88c09e8ea4bd8114bd1b19bd9bec4",
-        "seed": 99,
-        "size": {
-          "bytes": 33444528,
-          "limitBytes": 33554432
-        },
-        "maxima_mm": {
-          "preset": 0.017699237807769563,
-          "few": 14.580456856698625,
-          "basic": 14.367747192597006,
-          "all": 12.752925133276387
-        },
-        "geometry": {
-          "vertexCount": 50000,
-          "faceCount": 99996,
-          "indicesMatchFinalSource": true,
-          "facesSha256": "4e265dfcca4c1facca53d12b8b15789b2f774f7b981cec1c3faacf17851b6486"
-        }
-      },
-      {
-        "file": "male-independent-873421.json",
-        "passed": true,
-        "runtimeSha256": "7c8f92faef196060316834dc6a1b852508c296616151302d395f9e51d6bbc2e6",
-        "catalogSha256": "210e9feeeffbbab84d44bdd4c34394c600c88c09e8ea4bd8114bd1b19bd9bec4",
-        "seed": 873421,
-        "size": {
-          "bytes": 33431776,
-          "limitBytes": 33554432
-        },
-        "maxima_mm": {
-          "preset": 0.22443602985601568,
-          "few": 3.828401692101103,
-          "basic": 3.3846082952469163,
-          "all": 10.5552645078531
-        },
-        "geometry": {
-          "vertexCount": 50000,
-          "faceCount": 99996,
-          "indicesMatchFinalSource": true,
-          "facesSha256": "74c6df8d3e07c23c1aa2e5ed789342754def68cd177e6425a0335d994259b83c"
-        }
-      },
-      {
-        "file": "male-independent-99.json",
-        "passed": true,
-        "runtimeSha256": "7c8f92faef196060316834dc6a1b852508c296616151302d395f9e51d6bbc2e6",
-        "catalogSha256": "210e9feeeffbbab84d44bdd4c34394c600c88c09e8ea4bd8114bd1b19bd9bec4",
-        "seed": 99,
-        "size": {
-          "bytes": 33431776,
-          "limitBytes": 33554432
-        },
-        "maxima_mm": {
-          "preset": 0.22443602985601568,
-          "few": 3.8456182815471083,
-          "basic": 8.490463644403851,
-          "all": 8.042549230705822
-        },
-        "geometry": {
-          "vertexCount": 50000,
-          "faceCount": 99996,
-          "indicesMatchFinalSource": true,
-          "facesSha256": "74c6df8d3e07c23c1aa2e5ed789342754def68cd177e6425a0335d994259b83c"
-        }
-      }
-    ]
-  },
-  "roleCandidates": {
-    "converter": {
-      "published": false,
-      "activated": false,
-      "manifestSha256": "236b0e5b7c4ab2cc43afaab177e9acb9375e8a7a03bbc052d3a7e4285f87ae28",
-      "files": 281,
-      "manifestBytes": 48624,
-      "totalBytes": 1294777663,
-      "budgetBytes": 1543503872,
-      "proposedKey": "body-models/releases/lod-v5p2-converter-20261121-236b0e5b7c4a/manifest.json"
-    },
-    "inference": {
-      "published": false,
-      "activated": false,
-      "manifestSha256": "69ed20040aa88f8e9ca600311f14d470080722f21be4095504c51c4f211bd5bc",
-      "files": 70,
-      "manifestBytes": 12914,
-      "totalBytes": 161743930,
-      "budgetBytes": 805306368,
-      "proposedKey": "body-models/releases/lod-v5p2-inference-20261121-69ed20040aa8/manifest.json"
-    }
-  },
-  "clientCacheFix": {
-    "ci": {
-      "head": "0e1e5f98a847365a67408ae4e0577e72334b4e65",
-      "runId": 44877379212,
-      "status": "completed",
-      "conclusion": "success",
-      "url": "https://github.com/04JUNG/Standin-client/actions/runs/44877379212"
-    },
-    "nativeFiveMinuteRetestComplete": true,
-    "proof": {
-      "path": "evidence/native-save-cache-fix-retest.json",
-      "sha256": "50fac2bff0751511eea54c1e63dd2503bba159845e75a9a6b84c67a549403165"
-    }
-  },
-  "performance": {
-    "formalComparisonComplete": false,
-    "functionalSmokeExcludedFromPerformanceClaims": true,
-    "operatingBaselineProof": {
-      "path": "evidence/performance-operating-baseline-proof.json",
-      "sha256": "c13cc1b5c4505fe325fcf98c6a1ccd743f74efc414575343698cc2f709490346"
-    }
-  },
-  "wrapup": {
-    "additionalExperimentsStopped": true,
-    "reason": "User requested wrap-up",
-    "unfinishedMatrix": {
-      "observedUtc": "2026-11-21T08:07:50.980894+00:00",
-      "reason": "User requested immediate wrap-up; no further experimental iterations or unfinished matrix continuation",
-      "processes": [
-        {
-          "pid": 25905,
-          "script": "check_bff_matrix.py"
-        },
-        {
-          "pid": 25906,
-          "script": "check_bff_matrix.py"
-        },
-        {
-          "pid": 25911,
-          "script": "aggregate_bff_matrix.py"
-        }
-      ],
-      "matrixCompleted": 353,
-      "matrixRequired": 480,
-      "resultsPreserved": true
-    },
-    "experimentalSelectionCode": "Uncommitted source/main working-tree patches preserved; not included in the develop PR heads"
-  },
-  "allRequiredGatesPassed": false,
   "mainPullRequestsCreated": false,
-  "productionChanged": false,
-  "awsWrapupComparison": {
-    "observedUtc": "2026-11-21T08:09:05.057277+00:00",
-    "before": "aws-before.json",
-    "after": "aws-wrapup.json",
-    "ecsDesiredRunningTaskImagesAssetPinsUnchanged": true,
-    "scope": "Read-only ECS task/container/environment snapshot; this work made no production or staging service mutations"
-  },
-  "completion": "partial; additional experiments stopped for requested wrap-up"
+  "remaining": [
+    "20 actual native app benchmark saves",
+    "Final repeated comparison/provenance docs",
+    "Four selective main Draft PRs, remote CI and external review state"
+  ],
+  "scope": "Real native UI and CSP observations are separate from automated BFF combinations; API single observations are separate from actual native repeated statistics",
+  "canonicalEvidence": "https://github.com/04JUNG/Standin-server/blob/codex/newbody-default-staging-20261118/docs/newbody-v5p2-20261121/"
 }
